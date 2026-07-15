@@ -17,12 +17,14 @@ function NewTabAction({ query }: { query?: string }) {
       <Action
         title="Open with Zen"
         onAction={async () => {
+          const searchUrl = `${SEARCH_ENGINE[getPreferenceValues().searchEngine.toLowerCase()]}${encodeURIComponent(
+            query || "",
+          )}`;
+
           if (platform() === "win32") {
-            await runPowerShellScript(
-              `Start-Process "zen" "${SEARCH_ENGINE[getPreferenceValues().searchEngine.toLowerCase()]}${query || ""}"`,
-            );
+            await runPowerShellScript(`Start-Process -FilePath "zen" -ArgumentList "${searchUrl}"`);
           } else {
-            open(`${SEARCH_ENGINE[getPreferenceValues().searchEngine.toLowerCase()]}${query || ""}`, "zen");
+            open(searchUrl, "zen");
           }
         }}
       />

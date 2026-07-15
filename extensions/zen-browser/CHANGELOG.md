@@ -1,5 +1,9 @@
 # Zen Changelog
 
+## [Fix Multi-Word Search on Windows] - {PR-MERGE-DATE}
+
+- URL-encode New Tab search queries before launching Zen so multi-word searches open in one tab on Windows.
+
 ## [Fix Open Workspace Command for Recent Zen Versions] - 2026-06-05
 
 - Fixed the **Open Workspace** command crashing with `no such table: zen_workspaces`. Zen Browser migrated workspace storage from the `zen_workspaces` SQLite table in `places.sqlite` to a dedicated `zen-sessions.jsonlz4` file (see [zen-browser/desktop#6469](https://github.com/zen-browser/desktop/pull/6469)). The extension now reads workspace data directly from `zen-sessions.jsonlz4` using a pure-TypeScript mozLz40/LZ4 decompressor — no new runtime dependencies required.
