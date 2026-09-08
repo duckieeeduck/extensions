@@ -1,0 +1,37 @@
+name: ScreenOCR Windows native verification
+on:
+  push:
+    branches: [test/screenocr-windows-cloud]
+permissions:
+  contents: read
+jobs:
+  native:
+    name: Native OCR on Windows 11 ARM
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: duckieeeduck/extensions
+          ref: a8a0cb304b3a99d9434294fde59d072660245d19
+          sparse-checkout: extensions/screenocr
+          persist-credentials: false
+      - name: Record Windows and PowerShell environment
+        shell: powershell
+        run: |
+          $PSVersionTable
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture
+          Get-WindowsCapability -Online | Where-Object Name -Like 'Language.OCR*' | Format-Table Name, State
+      - name: Require English OCR capability
+        shell: powershell
+        run: |
+          $capability = Get-WindowsCapability -Online -Name 'Language.OCR~~~en-US~0.0.1.0'
+          if ($capability.State -ne 'Installed') {
+            $result = Add-WindowsCapability -Online -Name 'Language.OCR~~~en-US~0.0.1.0'
+            if ($result.RestartNeeded) { throw 'OCR capability requires a restart; this run cannot certify recognition.' }
+          }
+      - name: Run shipped PowerShell tests with real OCR required
+        shell: powershell
+        run: |
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File extensions/screenocr/tests/windows-native.ps1 -RequireOcr
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
