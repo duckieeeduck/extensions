@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: duckieeeduck/extensions
-          ref: a8a0cb304b3a99d9434294fde59d072660245d19
+          ref: ${{ github.sha }}
           sparse-checkout: extensions/screenocr
           persist-credentials: false
       - name: Record Windows and PowerShell environment
