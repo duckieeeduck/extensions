@@ -30,6 +30,22 @@ jobs:
             $result = Add-WindowsCapability -Online -Name 'Language.OCR~~~en-US~0.0.1.0'
             if ($result.RestartNeeded) { throw 'OCR capability requires a restart; this run cannot certify recognition.' }
           }
+      - name: Verify regression fails on previous PR helper
+        shell: powershell
+        run: |
+          $helper = 'extensions/screenocr/assets/ocr.ps1'
+          $backup = Join-Path $env:RUNNER_TEMP 'screenocr-fixed.ps1'
+          Copy-Item $helper $backup
+          try {
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/duckieeeduck/extensions/24214b96f3e8bc86bb2fdeaca32c3f376d6f8755/extensions/screenocr/assets/ocr.ps1' -OutFile $helper
+            $output = & powershell.exe -NoLogo -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File extensions/screenocr/tests/windows-native.ps1 -RequireOcr
+            $code = $LASTEXITCODE
+            $output | Write-Output
+            if ($code -eq 0 -or ($output -join "`n") -notmatch 'RESULT pass=13 fail=1 skip=0' -or ($output -join "`n") -notmatch 'FAIL another process can capture while the first bitmap is being recognized') {
+              throw 'The baseline did not reproduce exactly the expected lock-lifetime regression.'
+            }
+          } finally { Copy-Item $backup $helper -Force }
+          exit 0
       - name: Run shipped PowerShell tests with real OCR required
         shell: powershell
         run: |

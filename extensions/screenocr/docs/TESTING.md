@@ -27,6 +27,8 @@ The same commit also passed the upstream macOS distribution build, including Swi
 
 These results apply to that commit and those environments. They do not verify interactive Raycast behavior, mixed-DPI capture, or an x64 Windows desktop. Rerun the native suite after helper changes.
 
+The capture-concurrency fix and its native tests were verified at test-branch commit `d55be03a031806a72d323acb874c59819403b046`: all 13 native tests passed with zero failures or skips on Windows 11 Enterprise ARM. This includes separate-process area/fullscreen contention, non-capture mode independence, abandoned-lock recovery, and real OCR. The helper and test source applied to this PR are identical to that tested commit. [Concurrency verification log](https://github.com/duckieeeduck/extensions/actions/runs/34315945899/job/102352074340).
+
 From `extensions/screenocr` on Windows, run:
 
 ```sh
