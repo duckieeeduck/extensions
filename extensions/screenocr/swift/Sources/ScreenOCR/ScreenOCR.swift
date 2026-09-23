@@ -3,6 +3,33 @@ import RaycastSwiftMacros
 import ScreenCaptureKit
 import Vision
 
+/// Result returned to TypeScript. `status` is "recognized", "cancelled" or "error".
+/// A cancelled selection or a failure never arrives as text, so it cannot be
+/// copied to the clipboard or returned to another extension as a result.
+struct CaptureOutcome: Encodable {
+  let status: String
+  let text: String?
+  let message: String?
+
+  static func recognized(_ text: String) -> CaptureOutcome {
+    CaptureOutcome(status: "recognized", text: text, message: nil)
+  }
+
+  static var cancelled: CaptureOutcome {
+    CaptureOutcome(status: "cancelled", text: nil, message: nil)
+  }
+
+  static func error(_ message: String) -> CaptureOutcome {
+    CaptureOutcome(status: "error", text: nil, message: message)
+  }
+}
+
+enum SelectedArea {
+  case image(CGImage)
+  case cancelled
+  case failed
+}
+
 @raycast
 func recognizeText(
   fullscreen: Bool,
@@ -13,13 +40,19 @@ func recognizeText(
   customWordsList: [String],
   languages: [String],
   playSound: Bool
-) async -> String {
-  let imgRef = fullscreen
-    ? await captureScreen(keepImage: keepImage)
-    : captureSelectedArea(keepImage: keepImage, playSound: playSound)
-
-  guard let capturedImage = imgRef else {
-    return "Error: failed to capture image"
+) async -> CaptureOutcome {
+  let capturedImage: CGImage
+  if fullscreen {
+    guard let image = await captureScreen(keepImage: keepImage) else {
+      return .error("Failed to capture the screen")
+    }
+    capturedImage = image
+  } else {
+    switch captureSelectedArea(keepImage: keepImage, playSound: playSound) {
+    case .image(let image): capturedImage = image
+    case .cancelled: return .cancelled
+    case .failed: return .error("Failed to capture the selected area")
+    }
   }
 
   var request = RecognizeTextRequest()
@@ -34,31 +67,33 @@ func recognizeText(
       try await request.perform(on: capturedImage)
     }
     let separator = ignoreLineBreaks ? " " : "\n"
-    return observations
-      .compactMap { $0.topCandidates(1).first?.string }
-      .joined(separator: separator)
+    return .recognized(
+      observations
+        .compactMap { $0.topCandidates(1).first?.string }
+        .joined(separator: separator)
+    )
   } catch {
-    return "Error: \(error.localizedDescription)"
+    return .error(error.localizedDescription)
   }
 }
 
 @raycast
-func detectBarcode(keepImage: Bool, playSound: Bool) async -> String {
-  guard let capturedImage = captureSelectedArea(keepImage: keepImage, playSound: playSound) else {
-    return "Error: failed to capture image"
+func detectBarcode(keepImage: Bool, playSound: Bool) async -> CaptureOutcome {
+  let capturedImage: CGImage
+  switch captureSelectedArea(keepImage: keepImage, playSound: playSound) {
+  case .image(let image): capturedImage = image
+  case .cancelled: return .cancelled
+  case .failed: return .error("Failed to capture the selected area")
   }
 
   do {
     let observations = try await silencingStdout {
       try await DetectBarcodesRequest().perform(on: capturedImage)
     }
-    let values = observations.compactMap(\.payloadString)
-    guard !values.isEmpty else {
-      return "No barcodes or QR codes detected"
-    }
-    return values.joined(separator: "\n")
+    // An empty text means no code was found.
+    return .recognized(observations.compactMap(\.payloadString).joined(separator: "\n"))
   } catch {
-    return "Error: \(error.localizedDescription)"
+    return .error(error.localizedDescription)
   }
 }
 
@@ -98,8 +133,11 @@ func captureScreen(keepImage: Bool) async -> CGImage? {
   return image
 }
 
-func captureSelectedArea(keepImage: Bool, playSound: Bool) -> CGImage? {
+func captureSelectedArea(keepImage: Bool, playSound: Bool) -> SelectedArea {
   let filePath = randomPngPath()
+  // Pressing Escape in the selection leaves the clipboard untouched. Comparing the
+  // change count keeps a cancelled selection from reading an older clipboard image.
+  let clipboardChangeCount = NSPasteboard.general.changeCount
   let task = Process()
   task.launchPath = "/usr/sbin/screencapture"
   var arguments = ["-i"]
@@ -113,24 +151,34 @@ func captureSelectedArea(keepImage: Bool, playSound: Bool) -> CGImage? {
 
   let image: NSImage?
   if keepImage {
+    guard NSPasteboard.general.changeCount != clipboardChangeCount else {
+      return .cancelled
+    }
     guard
       let pasteboard = NSPasteboard.general.pasteboardItems?.first,
       let fileType = pasteboard.types.first,
       let data = pasteboard.data(forType: fileType)
     else {
-      return nil
+      return .failed
     }
     image = NSImage(data: data)
   } else {
     defer { try? FileManager.default.removeItem(atPath: filePath) }
+    // screencapture writes no file when the selection is cancelled.
+    guard FileManager.default.fileExists(atPath: filePath) else {
+      return .cancelled
+    }
     guard let data = try? Data(contentsOf: URL(fileURLWithPath: filePath)) else {
-      return nil
+      return .failed
     }
     image = NSImage(data: data)
   }
 
   var proposedRect = NSRect.zero
-  return image?.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
+  guard let cgImage = image?.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else {
+    return .failed
+  }
+  return .image(cgImage)
 }
 
 func randomPngPath() -> String {

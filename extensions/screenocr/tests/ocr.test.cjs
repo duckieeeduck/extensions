@@ -311,11 +311,11 @@ for (const entry of [
   });
 }
 
-test("macOS OCR retains selected languages and the original raw Swift contract", async () => {
+test("macOS OCR retains selected languages and passes them to Swift", async () => {
   const mac = createHost({
     platform: "darwin",
     storage: { SelectedLanguages: '[{"title":"French","value":"fr-FR"}]' },
-    swiftResult: "Known text",
+    swiftResult: { status: "recognized", text: "Known text" },
   });
   await mac
     .load("src/recognize-text.tsx")
@@ -354,3 +354,84 @@ test("barcode reports macOS limitation on Windows without loading Swift", async 
   );
   assert.match(win.calls.at(-1)[1], /only on macOS/);
 });
+
+for (const entry of [
+  "src/recognize-text.tsx",
+  "src/recognize-text-fullscreen.ts",
+  "src/detect-barcode.tsx",
+]) {
+  test(`${entry} on macOS leaves the clipboard unchanged when the selection is cancelled`, async () => {
+    const mac = createHost({
+      platform: "darwin",
+      swiftResult: { status: "cancelled" },
+    });
+    await mac.load(entry).default({});
+    assert.deepEqual(outputs(mac), []);
+    assert.equal(
+      mac.calls.some(([name]) => ["toast", "failure"].includes(name)),
+      false,
+    );
+  });
+
+  test(`${entry} on macOS reports capture failures without copying them`, async () => {
+    const mac = createHost({
+      platform: "darwin",
+      swiftResult: {
+        status: "error",
+        message: "Failed to capture the selected area",
+      },
+    });
+    await mac.load(entry).default({});
+    assert.deepEqual(outputs(mac), []);
+    assert.equal(
+      mac.calls.find(([name]) => name === "failure")[1],
+      "Failed to capture the selected area",
+    );
+  });
+
+  test(`${entry} on macOS treats an unexpected Swift result as a failure`, async () => {
+    const mac = createHost({
+      platform: "darwin",
+      swiftResult: "Error: failed to capture image",
+    });
+    await mac.load(entry).default({});
+    assert.deepEqual(outputs(mac), []);
+    assert.equal(
+      mac.calls.some(([name]) => name === "failure"),
+      true,
+    );
+  });
+}
+
+test("macOS reports empty recognition as no result", async () => {
+  const mac = createHost({
+    platform: "darwin",
+    swiftResult: { status: "recognized", text: "  " },
+  });
+  await mac.load("src/detect-barcode.tsx").default({});
+  assert.deepEqual(outputs(mac), []);
+  assert.equal(
+    mac.calls.find(([name]) => name === "failure")[2].title,
+    "No barcodes or QR codes detected",
+  );
+});
+
+for (const [swiftResult, expected] of [
+  [{ status: "cancelled" }, { text: null, error: "Recognition cancelled" }],
+  [
+    { status: "error", message: "Screen capture failed" },
+    { text: null, error: "Screen capture failed" },
+  ],
+]) {
+  test(`macOS callback receives ${swiftResult.status} as an error, never as text`, async () => {
+    const mac = createHost({ platform: "darwin", swiftResult });
+    await mac
+      .load("src/recognize-text.tsx")
+      .default({ launchContext: { callbackLaunchOptions: callbackOptions } });
+    assert.deepEqual(
+      mac.calls.find(([name]) => name === "callback"),
+      ["callback", callbackOptions, expected],
+    );
+    assert.deepEqual(outputs(mac), []);
+  });
+}

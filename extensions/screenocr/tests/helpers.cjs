@@ -71,7 +71,12 @@ function createHost(options = {}) {
         async (...args) => {
           calls.push(["swift", name, args]);
           if (options.swiftError) throw options.swiftError;
-          return options.swiftResult ?? "Example text";
+          return (
+            options.swiftResult ?? {
+              status: "recognized",
+              text: "Example text",
+            }
+          );
         },
       ]),
     ),

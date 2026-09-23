@@ -1,5 +1,11 @@
 # ScreenOCR Changelog
 
+## [Fix macOS Cancellation] - {PR_MERGE_DATE}
+
+- Cancelling a macOS selection no longer copies "Error: failed to capture image" to the clipboard or returns it to other extensions as recognized text. Cancellation is silent and leaves the clipboard unchanged.
+- With "Keep image in clipboard" enabled, cancelling a selection no longer recognizes an older image that was already on the clipboard.
+- macOS capture and recognition failures are shown as errors instead of being copied as text. Cross-extension callbacks receive them in the `error` field.
+
 ## [Windows Support] - 2026-09-20
 
 - Added Windows support for region, full-desktop and clipboard-image recognition using the local Windows OCR engine.

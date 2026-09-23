@@ -71,4 +71,6 @@ export default function Command({
 
 ## Windows behavior
 
-The existing `recognize-text` command and `huzef44/screenocr` identity also work on Windows, using the same `text`/`error` callback fields. Windows returns `text: null` with a human-readable error for no text, cancellation or recognition failure. Callback delivery is attempted once and bypasses the Windows copy/paste preference. Ordinary Windows cancellation is silent. macOS callback behavior is unchanged.
+The existing `recognize-text` command and `huzef44/screenocr` identity also work on Windows, using the same `text`/`error` callback fields. Windows returns `text: null` with a human-readable error for no text, cancellation or recognition failure. Callback delivery is attempted once and bypasses the Windows copy/paste preference. Ordinary Windows cancellation is silent.
+
+On macOS, a cancelled selection returns `text: null` with `error: "Recognition cancelled"`, and capture or recognition failures return `text: null` with the error message. Earlier versions returned these as text.
