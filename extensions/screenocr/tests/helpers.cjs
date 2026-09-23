@@ -20,7 +20,10 @@ function createHost(options = {}) {
     ...options.preferences,
   };
   const api = {
-    environment: { assetsPath: "C:\\Raycast Data\\ScreenOCR\\assets" },
+    environment: {
+      assetsPath: "C:\\Raycast Data\\ScreenOCR\\assets",
+      isDevelopment: options.isDevelopment ?? false,
+    },
     getPreferenceValues: () => preferences,
     closeMainWindow: async () => {
       calls.push(["close"]);

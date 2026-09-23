@@ -1,5 +1,10 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const {
+  BarcodeFormat,
+  EncodeHintType,
+  QRCodeWriter,
+} = require("@zxing/library");
 const { createHost } = require("./helpers.cjs");
 
 const callbackOptions = {
@@ -344,13 +349,202 @@ test("clipboard command reports Windows limitation on macOS without native calls
   );
 });
 
-test("barcode reports macOS limitation on Windows without loading Swift", async () => {
-  const win = createHost();
+// Renders QR codes into one grayscale image, as the helper's barcode mode would.
+function qrImage(codes, { width = 900, height = 400, invert = false } = {}) {
+  const pixels = new Uint8ClampedArray(width * height).fill(invert ? 0 : 255);
+  for (const { text, x, y, size = 240 } of codes) {
+    const matrix = new QRCodeWriter().encode(
+      text,
+      BarcodeFormat.QR_CODE,
+      size,
+      size,
+      new Map([
+        [EncodeHintType.CHARACTER_SET, "UTF-8"],
+        [EncodeHintType.MARGIN, 4],
+      ]),
+    );
+    for (let row = 0; row < matrix.getHeight(); row++)
+      for (let column = 0; column < matrix.getWidth(); column++) {
+        const dark = matrix.get(column, row) !== invert;
+        pixels[(y + row) * width + x + column] = dark ? 0 : 255;
+      }
+  }
+  return JSON.stringify({
+    status: "image",
+    width,
+    height,
+    luminance: Buffer.from(pixels).toString("base64"),
+  });
+}
+
+test("barcode on Windows decodes the selected region without loading Swift", async () => {
+  const text = "https://example.com/ScreenOCR?ref=äß漢字";
+  const win = createHost({ stdout: qrImage([{ text, x: 40, y: 40 }]) });
   await win.load("src/detect-barcode.tsx").default();
-  assert.deepEqual(outputs(win), []);
+  const processCall = win.calls.find(([name]) => name === "process");
+  assert.deepEqual(processCall[2].slice(-2), ["-Mode", "barcode"]);
+  assert.equal(processCall[3].timeout, 300_000);
   assert.equal(
     win.imports.some((name) => name.startsWith("swift:")),
     false,
   );
-  assert.match(win.calls.at(-1)[1], /only on macOS/);
+  assert.deepEqual(outputs(win), [["copy", text]]);
+  assert.equal(
+    win.calls.at(-1)[1].title,
+    "Copied barcode/QR code to clipboard",
+  );
+});
+
+test("barcode on Windows ignores the paste preference", async () => {
+  const win = createHost({
+    preferences: { resultAction: "paste" },
+    stdout: qrImage([{ text: "COPY-ONLY", x: 40, y: 40 }]),
+  });
+  await win.load("src/detect-barcode.tsx").default();
+  assert.deepEqual(outputs(win), [["copy", "COPY-ONLY"]]);
+});
+
+test("barcode on Windows returns every code, including light-on-dark codes", async () => {
+  const barcode = createHost().load("src/ocr/barcode.ts");
+  const image = JSON.parse(
+    qrImage([
+      { text: "FIRST", x: 40, y: 60 },
+      { text: "SECOND", x: 560, y: 60, size: 280 },
+    ]),
+  );
+  const pixels = new Uint8ClampedArray(Buffer.from(image.luminance, "base64"));
+  assert.deepEqual(
+    [...barcode.decodeBarcodes(pixels, image.width, image.height)].sort(),
+    ["FIRST", "SECOND"],
+  );
+
+  const row = JSON.parse(
+    qrImage(
+      [
+        { text: "A", x: 50, y: 100, size: 250 },
+        { text: "B", x: 650, y: 100, size: 250 },
+        { text: "C", x: 1250, y: 100, size: 250 },
+      ],
+      { width: 1600, height: 500 },
+    ),
+  );
+  assert.deepEqual(
+    [
+      ...barcode.decodeBarcodes(
+        new Uint8ClampedArray(Buffer.from(row.luminance, "base64")),
+        row.width,
+        row.height,
+      ),
+    ].sort(),
+    ["A", "B", "C"],
+  );
+
+  const inverted = JSON.parse(
+    qrImage([{ text: "DARK MODE", x: 100, y: 60 }], { invert: true }),
+  );
+  assert.deepEqual(
+    barcode.decodeBarcodes(
+      new Uint8ClampedArray(Buffer.from(inverted.luminance, "base64")),
+      inverted.width,
+      inverted.height,
+    ),
+    ["DARK MODE"],
+  );
+});
+
+test("barcode on Windows reports an empty selection as no code", async () => {
+  const win = createHost({ stdout: qrImage([]) });
+  await win.load("src/detect-barcode.tsx").default();
+  assert.deepEqual(outputs(win), []);
+  assert.equal(win.calls.at(-1)[2].title, "No barcodes or QR codes detected");
+});
+
+test("barcode cancellation on Windows is silent", async () => {
+  const win = createHost({ processError: { code: 2 }, stdout: "" });
+  await win.load("src/detect-barcode.tsx").default();
+  assert.deepEqual(
+    win.calls.map(([name]) => name),
+    ["close", "process"],
+  );
+});
+
+for (const [label, payload] of [
+  ["wrong pixel count", { width: 10, height: 10, luminance: "AAAA" }],
+  ["invalid base64", { width: 1, height: 1, luminance: "!!!!" }],
+  [
+    "oversized image",
+    {
+      width: 4096,
+      height: 1,
+      luminance: Buffer.alloc(4096).toString("base64"),
+    },
+  ],
+  ["extra fields", { width: 1, height: 1, luminance: "AA==", text: "secret" }],
+  ["fractional size", { width: 1.5, height: 1, luminance: "AA==" }],
+]) {
+  test(`barcode on Windows rejects helper image with ${label}`, async () => {
+    const barcode = await createHost({
+      stdout: JSON.stringify({ status: "image", ...payload }),
+    })
+      .load("src/ocr/windows.ts")
+      .detectBarcodeWindows();
+    assert.equal(barcode.status, "error");
+    assert.match(barcode.message, /invalid image/);
+  });
+}
+
+for (const [label, processError, stderr, message] of [
+  ["Constrained Language mode", { code: 7 }, "", /Constrained Language mode/],
+  [
+    "a blocked execution policy",
+    { code: 1 },
+    "File C:\\ocr.ps1 cannot be loaded.\r\n    + FullyQualifiedErrorId : UnauthorizedAccess",
+    /execution policy/,
+  ],
+  [
+    "a policy-blocked PowerShell start",
+    { code: "EACCES" },
+    "",
+    /prevented PowerShell from starting/,
+  ],
+  [
+    "an unrelated helper failure",
+    { code: 5 },
+    "System.UnauthorizedAccessException: Access denied",
+    /^Windows text recognition failed\.$/,
+  ],
+]) {
+  test(`Windows reports ${label} specifically`, async () => {
+    const outcome = await createHost({ processError, stdout: "", stderr })
+      .load("src/ocr/windows.ts")
+      .recognizeWindows("fullscreen");
+    assert.equal(outcome.status, "error");
+    assert.match(outcome.message, message);
+  });
+}
+
+test("Windows requests helper diagnostics only in development builds", async (t) => {
+  const logged = [];
+  t.mock.method(console, "error", (...args) => logged.push(args.join(" ")));
+
+  const production = createHost({ stderr: "screenocr 10ms forms-ready" });
+  await production.load("src/ocr/windows.ts").recognizeWindows("fullscreen");
+  assert.equal(production.calls[0][3].env, undefined);
+  assert.deepEqual(logged, []);
+
+  const development = createHost({
+    isDevelopment: true,
+    stderr: "screenocr 10ms forms-ready",
+  });
+  await development.load("src/ocr/windows.ts").recognizeWindows("fullscreen");
+  assert.equal(development.calls[0][3].env.SCREENOCR_DEBUG, "1");
+  assert.deepEqual(logged, ["ScreenOCR helper: screenocr 10ms forms-ready"]);
+});
+
+test("Windows language manager respects the toast preference", async () => {
+  const host = createHost({ preferences: { showToast: false } });
+  const { showSuccessToast, showFailureToast } = host.load("src/utils.ts");
+  await showSuccessToast("Saved");
+  await showFailureToast(new Error("Failed"));
+  assert.deepEqual(host.calls, []);
 });

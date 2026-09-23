@@ -1,13 +1,4 @@
-import {
-  Action,
-  ActionPanel,
-  Color,
-  Icon,
-  List,
-  showToast,
-  Toast,
-} from "@raycast/api";
-import { showFailureToast } from "@raycast/utils";
+import { Action, ActionPanel, Color, Icon, List } from "@raycast/api";
 import { useEffect, useState } from "react";
 import {
   getAvailableWindowsLanguages,
@@ -15,6 +6,7 @@ import {
   setWindowsRecognitionLanguage,
   type WindowsRecognizerLanguage,
 } from "../ocr/windows";
+import { showFailureToast, showSuccessToast } from "../utils";
 
 const AUTOMATIC_LANGUAGE: WindowsRecognizerLanguage = {
   tag: "auto",
@@ -53,8 +45,7 @@ export function WindowsLanguageManager() {
     try {
       await setWindowsRecognitionLanguage(language.tag);
       setSelected(language.tag);
-      await showToast(
-        Toast.Style.Success,
+      await showSuccessToast(
         `Recognition language set to ${language.displayName}`,
       );
     } catch (error) {

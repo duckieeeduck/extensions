@@ -1,6 +1,7 @@
 #requires -Version 5.1
 param(
-    [switch]$RequireOcr
+    [switch]$RequireOcr,
+    [switch]$RequireDesktop
 )
 
 Set-StrictMode -Version 2.0
@@ -62,7 +63,7 @@ function ConvertFrom-CodePoints {
 }
 
 function Invoke-HelperProcess {
-    param([string]$ScriptArguments, [string]$ScriptFile = $helperPath)
+    param([string]$ScriptArguments, [string]$ScriptFile = $helperPath, [hashtable]$Environment = @{})
 
     $powerShellPath = Join-Path $PSHOME 'powershell.exe'
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -74,6 +75,7 @@ function Invoke-HelperProcess {
     $startInfo.RedirectStandardError = $true
     $startInfo.StandardOutputEncoding = New-Object System.Text.UTF8Encoding $false
     $startInfo.StandardErrorEncoding = New-Object System.Text.UTF8Encoding $false
+    foreach ($name in $Environment.Keys) { $startInfo.EnvironmentVariables[$name] = [string]$Environment[$name] }
 
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
@@ -114,14 +116,23 @@ $functionAsts = @($helperAst.FindAll({
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
 }, $true))
 $requiredFunctions = @(
+    'Write-DebugLine',
+    'Initialize-WinRt',
+    'Initialize-NativeMethods',
     'Wait-WinRtOperation',
+    'Get-FittedSize',
     'New-CompatibleBitmap',
     'Resize-Bitmap',
+    'Set-ImageOrientation',
     'New-OcrEngine',
     'Normalize-OcrLine',
     'Invoke-Ocr',
     'Enter-CaptureMutex'
 )
+# Script-scope state the dot-sourced helper functions expect.
+$script:DebugOutput = $false
+$script:Clock = [System.Diagnostics.Stopwatch]::StartNew()
+$script:AsTaskGeneric = $null
 
 Invoke-Test 'helper parses as Windows PowerShell source' {
     Assert-Equal $parseErrors.Count 0 'The helper has parser errors.'
@@ -177,6 +188,34 @@ Invoke-Test 'CJK normalization preserves meaningful boundaries' {
     Assert-Equal (Normalize-OcrLine $nonBreaking 'zh-Hans') $nonBreaking 'Non-breaking spaces changed.'
 }
 
+Invoke-Test 'fitted sizes preserve aspect ratio within the limit' {
+    $width, $height = Get-FittedSize 4000 1000 2000
+    Assert-Equal $width 2000 'Fitted width was wrong.'
+    Assert-Equal $height 500 'Fitted height was wrong.'
+    $width, $height = Get-FittedSize 300 200 2000
+    Assert-Equal $width 300 'An image within the limit was resized.'
+    Assert-Equal $height 200 'An image within the limit was resized.'
+    $width, $height = Get-FittedSize 100000 1 2000
+    Assert-Equal $height 1 'An extreme aspect ratio produced a zero dimension.'
+}
+
+Invoke-Test 'EXIF orientation is applied to copied photo files' {
+    Add-Type -AssemblyName System.Drawing
+    $photo = New-Object System.Drawing.Bitmap (30, 10)
+    try {
+        $item = [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject([System.Drawing.Imaging.PropertyItem])
+        $item.Id = 0x0112
+        $item.Type = 3
+        $item.Len = 2
+        $item.Value = [byte[]](6, 0)
+        $photo.SetPropertyItem($item)
+        Set-ImageOrientation $photo
+        Assert-Equal $photo.Width 10 'Orientation 6 was not rotated.'
+        Assert-Equal $photo.Height 30 'Orientation 6 was not rotated.'
+    }
+    finally { $photo.Dispose() }
+}
+
 Invoke-Test 'bitmap resize clamps zero-sized requests' {
     Add-Type -AssemblyName System.Drawing
     $source = New-Object System.Drawing.Bitmap (20, 10)
@@ -214,7 +253,7 @@ Invoke-Test 'screen capture contention exits immediately without affecting non-c
         $ownsMutex = $heldMutex.WaitOne(0, $false)
         Assert-True $ownsMutex 'The test could not acquire the capture mutex.'
 
-        foreach ($mode in @('area', 'fullscreen')) {
+        foreach ($mode in @('area', 'fullscreen', 'barcode')) {
             $timer = [System.Diagnostics.Stopwatch]::StartNew()
             $result = Invoke-HelperProcess "-Mode $mode"
             $timer.Stop()
@@ -277,6 +316,143 @@ Invoke-Test 'capture mutex accepts an abandoned owner while its named object rem
         if ($holder) { $holder.Dispose() }
         $keepAlive.Dispose()
     }
+}
+
+Invoke-Test 'debug diagnostics stay on stderr and are off by default' {
+    $quiet = Invoke-HelperProcess '-ListLanguages'
+    Assert-True ([string]::IsNullOrWhiteSpace($quiet.Stderr)) 'Diagnostics were written without SCREENOCR_DEBUG.'
+    $verbose = Invoke-HelperProcess '-ListLanguages' $helperPath @{ SCREENOCR_DEBUG = '1' }
+    Assert-Equal $verbose.ExitCode 0 'Language inventory failed with diagnostics enabled.'
+    Assert-True ($verbose.Stderr -match 'winrt-ready') 'Diagnostics did not report Windows Runtime initialization.'
+    Assert-Equal (($verbose.Stdout.Trim() | ConvertFrom-Json).status) 'languages' 'Diagnostics changed the protocol output.'
+}
+
+Invoke-Test 'Constrained Language mode is reported without running the helper' {
+    $escapedPath = $helperPath.Replace("'", "''")
+    $command = "`$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'; & '$escapedPath' -Mode fullscreen; exit `$LASTEXITCODE"
+    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($command))
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = Join-Path $PSHOME 'powershell.exe'
+    $startInfo.Arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    try {
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'The constrained helper did not exit within 30 seconds.' }
+        Assert-Equal $process.ExitCode 7 "Constrained Language mode returned the wrong exit code: $($stderrTask.Result)"
+        $payload = $stdoutTask.Result.Trim() | ConvertFrom-Json
+        Assert-Equal $payload.code 'restricted-language' 'Constrained Language mode returned the wrong protocol code.'
+    }
+    finally { $process.Dispose() }
+}
+
+Invoke-Test 'barcode mode returns the selected region as luminance bytes' {
+    # Keep the shipped control flow, native compilation and conversion. Replace
+    # only desktop capture and selection so no interactive UI is required.
+    $replacements = @{
+        'Get-VirtualScreenBitmap' = @'
+function Get-VirtualScreenBitmap {
+    $bitmap = [System.Drawing.Bitmap]::new(40, 10, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.Clear([System.Drawing.Color]::White)
+        $graphics.FillRectangle([System.Drawing.Brushes]::Black, 0, 0, 20, 10)
+    } finally { $graphics.Dispose() }
+    return $bitmap
+}
+'@
+        'Select-ScreenRegion' = @'
+function Select-ScreenRegion {
+    param([System.Drawing.Bitmap]$Frozen)
+    return [System.Drawing.Rectangle]::new(10, 0, 20, 10)
+}
+'@
+    }
+    $instrumented = [System.IO.File]::ReadAllText($helperPath)
+    foreach ($definition in @($functionAsts | Where-Object { $replacements.ContainsKey($_.Name) } | Sort-Object { $_.Extent.StartOffset } -Descending)) {
+        $instrumented = $instrumented.Remove($definition.Extent.StartOffset, $definition.Extent.EndOffset - $definition.Extent.StartOffset).Insert($definition.Extent.StartOffset, $replacements[$definition.Name])
+    }
+    $testHelper = Join-Path ([System.IO.Path]::GetTempPath()) ('screenocr-barcode-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+    try {
+        [System.IO.File]::WriteAllText($testHelper, $instrumented, [System.Text.Encoding]::ASCII)
+        $result = Invoke-HelperProcess '-Mode barcode' $testHelper
+        Assert-Equal $result.ExitCode 0 "Barcode mode failed: $($result.Stderr)"
+        Assert-True ([string]::IsNullOrWhiteSpace($result.Stderr)) 'Barcode mode wrote unexpected diagnostics.'
+        $payload = $result.Stdout.Trim() | ConvertFrom-Json
+        Assert-Equal $payload.status 'image' 'Barcode mode returned the wrong status.'
+        Assert-Equal @($payload.PSObject.Properties).Count 4 'Barcode mode returned unexpected protocol fields.'
+        Assert-Equal $payload.width 20 'Barcode mode returned the wrong width.'
+        Assert-Equal $payload.height 10 'Barcode mode returned the wrong height.'
+        $bytes = [Convert]::FromBase64String($payload.luminance)
+        Assert-Equal $bytes.Length 200 'Barcode mode returned the wrong number of pixels.'
+        foreach ($row in 0..9) {
+            Assert-Equal ([int]$bytes[$row * 20]) 0 "Row $row did not start black."
+            Assert-Equal ([int]$bytes[$row * 20 + 9]) 0 "Row $row changed before the edge."
+            Assert-Equal ([int]$bytes[$row * 20 + 10]) 255 "Row $row did not turn white at the edge."
+            Assert-Equal ([int]$bytes[$row * 20 + 19]) 255 "Row $row did not end white."
+        }
+    }
+    finally { Remove-Item -LiteralPath $testHelper -Force -ErrorAction SilentlyContinue }
+}
+
+Invoke-Test 'Escape cancels the selection overlay without keyboard focus and releases the key' {
+    Add-Type -AssemblyName System.Windows.Forms
+    if (-not ('ScreenOcrTest.Windows' -as [type])) {
+        Add-Type -Namespace ScreenOcrTest -Name Windows -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+public static extern IntPtr FindWindow(string className, string windowName);
+[DllImport("user32.dll")]
+public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint virtualKey);
+[DllImport("user32.dll")]
+public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+'@
+    }
+    $powerShellPath = Join-Path $PSHOME 'powershell.exe'
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $powerShellPath
+    $startInfo.Arguments = '-NoLogo -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "' + $helperPath + '" -Mode area'
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    try {
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $timer = [System.Diagnostics.Stopwatch]::StartNew()
+        $overlay = [IntPtr]::Zero
+        while ($timer.Elapsed.TotalSeconds -lt 20 -and -not $process.HasExited -and $overlay -eq [IntPtr]::Zero) {
+            Start-Sleep -Milliseconds 100
+            $overlay = [ScreenOcrTest.Windows]::FindWindow($null, 'ScreenOCR selection')
+        }
+        if ($overlay -eq [IntPtr]::Zero) {
+            if (-not $process.HasExited) { $process.Kill() }
+            $process.WaitForExit()
+            $reason = "The selection overlay did not appear (exit $($process.ExitCode)): $($stderrTask.Result.Trim())"
+            if ($RequireDesktop) { throw $reason }
+            Skip-CurrentTest "No interactive desktop. $reason"
+            return
+        }
+        # Deliberately send no click and set no focus: the hot key must work without them.
+        Start-Sleep -Milliseconds 300
+        [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+        if (-not $process.WaitForExit(10000)) {
+            $process.Kill()
+            $process.WaitForExit()
+            throw 'Escape did not close the selection overlay.'
+        }
+        Assert-Equal $process.ExitCode 2 "Escape did not report cancellation: $($stderrTask.Result)"
+        Assert-True ([string]::IsNullOrWhiteSpace($stdoutTask.Result)) 'Cancellation wrote a protocol payload.'
+        $probeId = 0x5350
+        $available = [ScreenOcrTest.Windows]::RegisterHotKey([IntPtr]::Zero, $probeId, 0x4000, 0x1B)
+        if ($available) { [void][ScreenOcrTest.Windows]::UnregisterHotKey([IntPtr]::Zero, $probeId) }
+        Assert-True $available 'The Escape hot key remained registered after the overlay closed.'
+    }
+    finally { $process.Dispose() }
 }
 
 Invoke-Test 'invalid language arguments are rejected before helper execution' {
@@ -422,6 +598,51 @@ Invoke-Test 'WinRT recognizes known text from an in-memory bitmap' {
         if ($font) { $font.Dispose() }
         if ($graphics) { $graphics.Dispose() }
         $bitmap.Dispose()
+    }
+}
+
+Invoke-Test 'clipboard recognition prefers the PNG format that keeps transparency' {
+    if (-not $script:WinRtReady) { Skip-CurrentTest 'Windows Runtime initialization failed in the preceding test.'; return }
+    $latinLanguage = @([Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | Where-Object { $_.Script -eq 'Latn' } | Select-Object -First 1)
+    if ($latinLanguage.Count -eq 0) {
+        if ($RequireOcr) { throw 'A Latin-script Windows OCR language pack is required for the clipboard test.' }
+        Skip-CurrentTest 'No Latin-script Windows OCR language pack is installed.'
+        return
+    }
+    Add-Type -AssemblyName System.Windows.Forms
+    # Black text on a transparent background. The standard bitmap format is given
+    # a blank image, so recognizing the text proves the PNG format was used.
+    $transparent = New-Object System.Drawing.Bitmap (1200, 240, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $blank = New-Object System.Drawing.Bitmap (1200, 240)
+    $png = New-Object System.IO.MemoryStream
+    $graphics = $null
+    $font = $null
+    try {
+        $graphics = [System.Drawing.Graphics]::FromImage($transparent)
+        $graphics.Clear([System.Drawing.Color]::Transparent)
+        $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+        $font = New-Object System.Drawing.Font ('Segoe UI', 72, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+        $graphics.DrawString('SCREENOCR TEST', $font, [System.Drawing.Brushes]::Black, 30, 55)
+        $transparent.Save($png, [System.Drawing.Imaging.ImageFormat]::Png)
+        $blankGraphics = [System.Drawing.Graphics]::FromImage($blank)
+        try { $blankGraphics.Clear([System.Drawing.Color]::White) } finally { $blankGraphics.Dispose() }
+        $data = New-Object System.Windows.Forms.DataObject
+        $data.SetData('PNG', $false, $png)
+        $data.SetData([System.Windows.Forms.DataFormats]::Bitmap, $true, $blank)
+        [System.Windows.Forms.Clipboard]::SetDataObject($data, $true)
+        $result = Invoke-HelperProcess ('-Mode clipboard -Language ' + $latinLanguage[0].LanguageTag)
+        Assert-Equal $result.ExitCode 0 "Clipboard recognition failed: $($result.Stderr) $($result.Stdout)"
+        $payload = $result.Stdout.Trim() | ConvertFrom-Json
+        Assert-Equal $payload.status 'recognized' 'Clipboard recognition found no text in the PNG format.'
+        Assert-Equal ([regex]::Replace($payload.text, '[^A-Za-z]', '').ToUpperInvariant()) 'SCREENOCRTEST' 'Clipboard recognition misread the PNG format.'
+    }
+    finally {
+        try { [System.Windows.Forms.Clipboard]::Clear() } catch {}
+        if ($font) { $font.Dispose() }
+        if ($graphics) { $graphics.Dispose() }
+        $png.Dispose()
+        $blank.Dispose()
+        $transparent.Dispose()
     }
 }
 

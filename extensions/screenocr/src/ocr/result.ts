@@ -13,6 +13,7 @@ export async function handleRecognitionOutcome(
     callbackOptions?: CallbackOptions;
     subject?: string;
     noResultTitle?: string;
+    successTitle?: string;
     action?: ResultAction;
   } = {},
 ): Promise<void> {
@@ -58,7 +59,9 @@ export async function handleRecognitionOutcome(
   if (action === "copy") {
     try {
       await Clipboard.copy(outcome.text);
-      await showSuccessToast("Copied text to clipboard");
+      await showSuccessToast(
+        options.successTitle ?? "Copied text to clipboard",
+      );
     } catch (error) {
       await showFailureToast(error, {
         title: "Failed to copy recognized text",

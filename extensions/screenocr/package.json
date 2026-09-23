@@ -268,13 +268,14 @@
     {
       "name": "detect-barcode",
       "title": "Detect Barcode/QR Code",
-      "description": "Detect barcodes and QR codes from the captured screen area (macOS only)",
+      "description": "Detect barcodes and QR codes from the captured screen area",
       "mode": "no-view"
     }
   ],
   "dependencies": {
     "@raycast/api": "^1.104.20",
     "@raycast/utils": "^2.2.7",
+    "@zxing/library": "^0.21.3",
     "raycast-cross-extension": "^0.2.3"
   },
   "devDependencies": {
