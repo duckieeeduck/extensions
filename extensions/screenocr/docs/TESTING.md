@@ -91,6 +91,29 @@ A small 277 x 93 dark screenshot with a spelling underline produced character su
 
 The local npm audit reported five vulnerabilities. They remain unresolved; dependencies were not upgraded. In particular, the esbuild Windows file-serving advisory was identified. A search finding no direct serving references is not a security clearance. Review dependency updates separately from the hash-verified source patch.
 
+## Windows improvements — verification
+
+This change replaces keyboard polling with an Escape hot key, adds Windows barcode detection, reports organization policies that block the helper, loads the OCR engine only after capture, and reads transparent clipboard images and rotated photos correctly.
+
+Automated coverage:
+
+- `npm test` adds mocked coverage for the barcode protocol and decoder (several codes, light-on-dark codes, invalid helper images), policy error messages and development-only diagnostics. The decoder runs for real against generated QR codes; the helper does not.
+- The embedded C# (hot key, DPI and luminance conversion) was compile-checked against the .NET Framework 4.8 reference assemblies with C# 5. That check is not a Windows run.
+- `npm run test:windows` adds native tests for fitted sizes, EXIF orientation, diagnostics staying on stderr, Constrained Language mode, the barcode luminance protocol, Escape cancellation without focus (including release of the hot key) and transparent PNG clipboard recognition. The Escape test needs an interactive desktop; it is skipped without one unless `-RequireDesktop` is passed:
+
+```powershell
+npm.cmd run test:windows -- -RequireDesktop
+```
+
+Set `SCREENOCR_DEBUG=1` (development builds set it automatically) to print helper timings, DPI mode and hot-key status to stderr.
+
+Desktop checks still needed for this change:
+
+- Press Escape immediately after the overlay appears, without clicking: the overlay closes, the clipboard is unchanged, and the application underneath does not receive Escape.
+- Detect a QR code and a 1D barcode from a region; select a region containing two codes.
+- Recognize an image copied from a browser with a transparent background, and a copied phone photo with EXIF rotation.
+- Compare time-to-overlay with `SCREENOCR_DEBUG=1` before and after this change.
+
 ## macOS compatibility checks — pending on device
 
 The Swift source is identical to upstream commit `4729145871e638f806082b1f9e4fb791fba5a8bc`. Existing macOS command bodies and native string handling are retained behind platform routing. This contribution does not fix existing macOS error/cancellation behavior or add macOS clipboard OCR.

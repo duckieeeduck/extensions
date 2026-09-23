@@ -1,5 +1,14 @@
 # ScreenOCR Changelog
 
+## [Windows Improvements] - {PR_MERGE_DATE}
+
+- Added barcode and QR-code detection on Windows. Codes in the selected region are decoded locally, including several codes at once and light-on-dark codes.
+- Escape now cancels the Windows selection overlay without clicking it first, and no longer reaches the application underneath. The overlay no longer polls the keyboard.
+- Windows reports organization policies that block the helper (Constrained Language mode, execution policy or a blocked PowerShell start) instead of a generic failure.
+- Less startup work on Windows: the selection overlay no longer waits for the OCR engine to load, clipboard recognition skips unneeded native setup, and images reach the OCR engine without PNG re-encoding.
+- Clipboard images copied from browsers and Office keep their transparency, and copied photo files are rotated according to their EXIF orientation.
+- Windows requirements now state Windows 11, the tested version.
+
 ## [Clipboard Image OCR on macOS] - 2026-10-31
 
 - Added macOS support for **Recognize Text in Clipboard Image**, including copied image files, using Apple Vision with your recognition preferences.

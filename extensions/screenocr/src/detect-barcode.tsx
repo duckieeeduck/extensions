@@ -25,6 +25,7 @@ export default async function command() {
   await handleRecognitionOutcome(outcome, {
     subject: "detecting barcode/QR code",
     noResultTitle: "No barcodes or QR codes detected",
+    successTitle: "Copied barcode/QR code to clipboard",
     action: "copy",
   });
 }

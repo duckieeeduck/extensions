@@ -16,10 +16,13 @@ export async function recognize(
 }
 
 export async function detectBarcode(): Promise<RecognitionOutcome> {
+  if (process.platform === "win32") {
+    const { detectBarcodeWindows } = await import("./ocr/windows");
+    return detectBarcodeWindows();
+  }
   return {
     status: "error",
-    message:
-      "Barcode and QR code detection is currently available only on macOS",
+    message: "Barcode detection through the Windows helper requires Windows",
   };
 }
 
