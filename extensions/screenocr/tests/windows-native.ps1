@@ -63,7 +63,7 @@ function ConvertFrom-CodePoints {
 }
 
 function Invoke-HelperProcess {
-    param([string]$ScriptArguments, [string]$ScriptFile = $helperPath, [hashtable]$Environment = @{})
+    param([string]$ScriptArguments, [string]$ScriptFile = $helperPath, [hashtable]$Environment = @{}, [switch]$MeasurePeak)
 
     $powerShellPath = Join-Path $PSHOME 'powershell.exe'
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -83,16 +83,34 @@ function Invoke-HelperProcess {
         [void]$process.Start()
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(30000)) {
+        $peakWorkingSet = 0L
+        if ($MeasurePeak) {
+            # Sample while the process runs, so a peak is still recorded when the value
+            # cannot be read after the process has exited. The kernel's peak only grows.
+            # Process caches its information, so Refresh before every read.
+            $timeout = [System.Diagnostics.Stopwatch]::StartNew()
+            while (-not $process.WaitForExit(20) -and $timeout.Elapsed.TotalSeconds -lt 30) {
+                try { $process.Refresh(); $peakWorkingSet = [Math]::Max($peakWorkingSet, [long]$process.PeakWorkingSet64) } catch {}
+            }
+            if (-not $process.HasExited) {
+                $process.Kill()
+                $process.WaitForExit()
+                throw 'The helper process did not exit within 30 seconds.'
+            }
+            try { $process.Refresh(); $peakWorkingSet = [Math]::Max($peakWorkingSet, [long]$process.PeakWorkingSet64) } catch {}
+        }
+        elseif (-not $process.WaitForExit(30000)) {
             $process.Kill()
             $process.WaitForExit()
             throw 'The helper process did not exit within 30 seconds.'
         }
-        return New-Object PSObject -Property @{
+        $output = @{
             ExitCode = $process.ExitCode
             Stdout = $stdoutTask.Result
             Stderr = $stderrTask.Result
         }
+        if ($MeasurePeak) { $output['PeakWorkingSet64'] = $peakWorkingSet }
+        return New-Object PSObject -Property $output
     }
     finally {
         $process.Dispose()
@@ -754,6 +772,124 @@ Invoke-Test 'copied files whose content is not a raster image are refused' {
         if ($font) { $font.Dispose() }
         if ($refGraphics) { $refGraphics.Dispose() }
         if ($refBitmap) { $refBitmap.Dispose() }
+        Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Invoke-Test 'copied images with huge declared dimensions are refused with bounded memory' {
+    Add-Type -AssemblyName System.Drawing
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.IO.Compression
+    # A 30000 x 30000 grayscale PNG whose pixels are all zero. The zero rows compress
+    # to well under 5 MB, but decoding it requires a full-size bitmap.
+    function New-CrcTable {
+        $table = [long[]]::new(256)
+        for ($n = 0; $n -lt 256; $n++) {
+            $c = [long]$n
+            for ($bit = 0; $bit -lt 8; $bit++) {
+                if (($c -band 1L) -ne 0L) { $c = 0xEDB88320L -bxor ($c -shr 1) }
+                else { $c = $c -shr 1 }
+            }
+            $table[$n] = $c
+        }
+        return ,$table
+    }
+    function Get-Crc32 {
+        param([long[]]$Table, [byte[]]$Bytes)
+        $crc = 0xFFFFFFFFL
+        foreach ($byte in $Bytes) {
+            $crc = $Table[($crc -bxor [long]$byte) -band 0xFFL] -bxor ($crc -shr 8)
+        }
+        return ($crc -bxor 0xFFFFFFFFL)
+    }
+    function Get-BigEndianBytes {
+        param([long]$Value)
+        return [byte[]]@(
+            [byte](($Value -shr 24) -band 0xFFL),
+            [byte](($Value -shr 16) -band 0xFFL),
+            [byte](($Value -shr 8) -band 0xFFL),
+            [byte]($Value -band 0xFFL)
+        )
+    }
+    function Write-PngChunk {
+        param([System.IO.Stream]$Output, [string]$Type, [byte[]]$Data, [long[]]$Table)
+        $typeBytes = [System.Text.Encoding]::ASCII.GetBytes($Type)
+        $body = [byte[]]::new($typeBytes.Length + $Data.Length)
+        [Array]::Copy($typeBytes, 0, $body, 0, $typeBytes.Length)
+        [Array]::Copy($Data, 0, $body, $typeBytes.Length, $Data.Length)
+        $Output.Write((Get-BigEndianBytes $Data.Length), 0, 4)
+        $Output.Write($body, 0, $body.Length)
+        $Output.Write((Get-BigEndianBytes (Get-Crc32 $Table $body)), 0, 4)
+    }
+
+    $folder = Join-Path ([System.IO.Path]::GetTempPath()) ('screenocr-bomb-' + [Guid]::NewGuid().ToString('N'))
+    $bombPath = Join-Path $folder 'bomb.png'
+    $width = 30000
+    $height = 30000
+    $rowLength = $width + 1
+    try {
+        [void][System.IO.Directory]::CreateDirectory($folder)
+        $table = New-CrcTable
+
+        $ihdr = [byte[]]::new(13)
+        [Array]::Copy((Get-BigEndianBytes $width), 0, $ihdr, 0, 4)
+        [Array]::Copy((Get-BigEndianBytes $height), 0, $ihdr, 4, 4)
+        $ihdr[8] = 8   # bit depth
+        $ihdr[9] = 0   # color type: grayscale
+
+        # zlib stream: header, raw deflate of the scanlines, Adler-32 of the scanlines.
+        $zlib = New-Object System.IO.MemoryStream
+        $zlib.WriteByte(0x78)
+        $zlib.WriteByte(0x9C)
+        $deflate = New-Object System.IO.Compression.DeflateStream ($zlib, [System.IO.Compression.CompressionMode]::Compress, $true)
+        $row = [byte[]]::new($rowLength)   # filter type 0 followed by 30000 zero pixels
+        $adlerA = 1L
+        $adlerB = 0L
+        try {
+            for ($y = 0; $y -lt $height; $y++) {
+                $deflate.Write($row, 0, $rowLength)
+                # Every byte of the row is zero, so A stays the same and B grows by A per byte.
+                $adlerB = ($adlerB + [long]$rowLength * $adlerA) % 65521L
+            }
+        }
+        finally { $deflate.Dispose() }
+        $zlib.Write((Get-BigEndianBytes (($adlerB -shl 16) -bor $adlerA)), 0, 4)
+        $idat = $zlib.ToArray()
+        $zlib.Dispose()
+
+        $output = New-Object System.IO.FileStream ($bombPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+        try {
+            $signature = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+            $output.Write($signature, 0, $signature.Length)
+            Write-PngChunk $output 'IHDR' $ihdr $table
+            Write-PngChunk $output 'IDAT' $idat $table
+            Write-PngChunk $output 'IEND' ([byte[]]::new(0)) $table
+        }
+        finally { $output.Dispose() }
+        $fileSize = (Get-Item -LiteralPath $bombPath).Length
+        Assert-True ($fileSize -lt 5MB) "The generated PNG is unexpectedly large: $fileSize bytes."
+
+        $files = New-Object System.Collections.Specialized.StringCollection
+        [void]$files.Add($bombPath)
+        [System.Windows.Forms.Clipboard]::SetFileDropList($files)
+
+        $timer = [System.Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-HelperProcess -ScriptArguments '-Mode clipboard' -MeasurePeak
+        $timer.Stop()
+        $elapsedSeconds = $timer.Elapsed.TotalSeconds
+        $peakBytes = [long]$result.PeakWorkingSet64
+        Write-Host ('bomb.png ({0} bytes) clipboard refusal: exit={1} elapsed={2:N2} s peak working set={3:N1} MB' -f $fileSize, $result.ExitCode, $elapsedSeconds, ($peakBytes / 1MB))
+
+        Assert-Equal $result.ExitCode 4 "Huge declared dimensions did not return the clipboard error exit code: $($result.Stderr)"
+        $payload = $result.Stdout.Trim() | ConvertFrom-Json
+        Assert-Equal $payload.status 'error' 'Huge declared dimensions returned the wrong status.'
+        Assert-Equal $payload.code 'clipboard-too-large' 'Huge declared dimensions returned the wrong protocol code.'
+        Assert-True ($elapsedSeconds -lt 15) "Refusing the huge declared dimensions took $elapsedSeconds seconds."
+        Assert-True ($peakBytes -gt 0) 'The helper peak working set could not be measured.'
+        Assert-True ($peakBytes -lt 600MB) "Refusing the huge declared dimensions used $([Math]::Round($peakBytes / 1MB)) MB at peak."
+    }
+    finally {
+        try { [System.Windows.Forms.Clipboard]::Clear() } catch {}
         Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
