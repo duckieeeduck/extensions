@@ -676,6 +676,28 @@ describe("Windows helper protocol rejects malformed output", () => {
     });
   }
 
+  test("detectBarcodeWindows accepts a full-size 2048 x 2048 luminance payload", async () => {
+    // 4,194,304 bytes encode to 5,592,408 base64 characters (about 5.6 MB).
+    // Guards the largest helper payload against regex stack overflows.
+    const luminance = Buffer.alloc(2048 * 2048, 255).toString("base64");
+    assert.equal(luminance.length, 5_592_408);
+    const host = createHost({
+      stdout: JSON.stringify({
+        status: "image",
+        width: 2048,
+        height: 2048,
+        luminance,
+      }),
+    });
+    const outcome = await host
+      .load("src/ocr/windows.ts")
+      .detectBarcodeWindows();
+    assert.ok(
+      ["no-text", "recognized"].includes(outcome.status),
+      `expected a decoded image, got ${JSON.stringify(outcome)}`,
+    );
+  });
+
   const malformedLanguageLists = [
     [
       "duplicate tags differing only by case",

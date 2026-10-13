@@ -370,6 +370,7 @@ function parseImagePayload(stdout: string): {
     !isDimension(payload.width) ||
     !isDimension(payload.height) ||
     typeof payload.luminance !== "string" ||
+    payload.luminance.length % 4 !== 0 ||
     !BASE64.test(payload.luminance)
   ) {
     throw new ProtocolError(
