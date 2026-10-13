@@ -505,6 +505,48 @@ function Test-LocalFilePath {
     return [bool]($Path -match '^[A-Za-z]:\\')
 }
 
+function Get-ImageSignature {
+    # Identifies a raster format from its leading bytes. Returns $null for anything else.
+    param([byte[]]$Header)
+    $signatures = @(
+        @{ Format = 'png'; Bytes = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) },
+        @{ Format = 'jpeg'; Bytes = [byte[]](0xFF, 0xD8, 0xFF) },
+        @{ Format = 'gif'; Bytes = [byte[]](0x47, 0x49, 0x46, 0x38, 0x37, 0x61) },
+        @{ Format = 'gif'; Bytes = [byte[]](0x47, 0x49, 0x46, 0x38, 0x39, 0x61) },
+        @{ Format = 'bmp'; Bytes = [byte[]](0x42, 0x4D) },
+        @{ Format = 'tiff'; Bytes = [byte[]](0x49, 0x49, 0x2A, 0x00) },
+        @{ Format = 'tiff'; Bytes = [byte[]](0x4D, 0x4D, 0x00, 0x2A) }
+    )
+    if ($null -eq $Header) { return $null }
+    foreach ($signature in $signatures) {
+        $bytes = $signature.Bytes
+        if ($Header.Length -lt $bytes.Length) { continue }
+        $matched = $true
+        for ($i = 0; $i -lt $bytes.Length; $i++) {
+            if ($Header[$i] -ne $bytes[$i]) { $matched = $false; break }
+        }
+        if ($matched) { return $signature.Format }
+    }
+    return $null
+}
+
+function Read-StreamHeader {
+    # Reads up to the first 8 bytes and leaves the stream at its start.
+    param([System.IO.Stream]$Stream)
+    $buffer = [byte[]]::new(8)
+    $total = 0
+    while ($total -lt $buffer.Length) {
+        $read = $Stream.Read($buffer, $total, $buffer.Length - $total)
+        if ($read -le 0) { break }
+        $total += $read
+    }
+    $Stream.Position = 0
+    $header = [byte[]]::new($total)
+    [Array]::Copy($buffer, $header, $total)
+    # The comma keeps an empty or short header from being unrolled into nothing.
+    return ,$header
+}
+
 function Read-ClipboardPngOnce {
     # Browsers and Office also publish a PNG clipboard format that keeps transparency.
     # The standard bitmap format drops alpha, which can turn dark text on a transparent
@@ -516,7 +558,12 @@ function Read-ClipboardPngOnce {
     try {
         if ($data.Length -gt $script:MaxClipboardFileBytes) { return @{ Kind = 'too-large' } }
         $data.Position = 0
+        # A stream that is not PNG content falls back to the standard bitmap format.
+        if (-not ((Get-ImageSignature (Read-StreamHeader $data)) -eq 'png')) { return $null }
         $image = [System.Drawing.Image]::FromStream($data, $true, $true)
+        # Defense in depth: only the known raster formats are converted.
+        $rasterGuids = @([System.Drawing.Imaging.ImageFormat]::Png, [System.Drawing.Imaging.ImageFormat]::Jpeg, [System.Drawing.Imaging.ImageFormat]::Gif, [System.Drawing.Imaging.ImageFormat]::Bmp, [System.Drawing.Imaging.ImageFormat]::Tiff).Guid
+        if ($rasterGuids -notcontains $image.RawFormat.Guid) { return $null }
         return @{ Kind = 'image'; Bitmap = (New-CompatibleBitmap $image) }
     }
     catch {
@@ -564,13 +611,19 @@ function Read-ClipboardBitmapOnce {
             try {
                 $stream = New-Object System.IO.FileStream ($file, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
                 if ($stream.Length -gt $script:MaxClipboardFileBytes) { $foundTooLarge = $true; continue }
+                $header = Read-StreamHeader $stream
             }
             catch {
                 $foundUnreadable = $true
                 continue
             }
+            # GDI+ picks its decoder from the content, so a metafile named .png would otherwise reach the metafile parser.
+            if (-not (Get-ImageSignature $header)) { $foundUnsupported = $true; continue }
             try {
                 $image = [System.Drawing.Image]::FromStream($stream, $true, $true)
+                # Defense in depth: only the known raster formats are accepted.
+                $rasterGuids = @([System.Drawing.Imaging.ImageFormat]::Png, [System.Drawing.Imaging.ImageFormat]::Jpeg, [System.Drawing.Imaging.ImageFormat]::Gif, [System.Drawing.Imaging.ImageFormat]::Bmp, [System.Drawing.Imaging.ImageFormat]::Tiff).Guid
+                if ($rasterGuids -notcontains $image.RawFormat.Guid) { $foundUnsupported = $true; continue }
                 Set-ImageOrientation $image
                 return @{ Kind = 'image'; Bitmap = (New-CompatibleBitmap $image) }
             }
