@@ -84,7 +84,7 @@ Repro test commits are now on `ext/screenocr-windows-improvements` (cd77e9ca9 W1
 | F-W6 | `Set-StrictMode -Version 2.0` | windows | dropped | |
 | F-M1 | Check `dup`/`open` results; skip silencing if either fails | macOS | dropped | |
 | F-M2 | Per-run private temp folder, removed on every exit path | macOS | dropped | |
-| F-T3 | Canonical padded base64 regex in windows.ts | windows (via work/t3, cherry-pick) | doing (Haiku, wt-t3) | |
+| F-T3 | Require luminance length % 4 == 0 (kept the linear BASE64 regex; a grouped canonical regex overflowed the V8 stack on 5.6 MB, now guarded by a 2048x2048 test) | windows (via work/t3, cherry-pick pending) | done, Opus reviewed: 103/103 tests | 9634b8af6 | |
 | F-C1 | Workflow hardening | ci only | done | |
 Each fix also adds a CHANGELOG line under the existing unreleased entry.
 
@@ -97,6 +97,7 @@ Each fix also adds a CHANGELOG line under the existing unreleased entry.
 ### Phase 5: final review and PRs
 | ID | Task | Status |
 |---|---|---|
+| P5.0 | Normalize commit metadata on ext branches: author duckieeeduck for all PR commits, trailers = the session's prescribed attribution lines (workers added other trailers) | todo |
 | P5.1 | Opus final review of each ext branch diff (correctness and security) | todo |
 | P5.2 | Push ext branches; open draft PR to raycast/extensions for Windows (PR-1-windows.md + CI links + hardening section) | todo |
 | P5.3 | Open draft PR for macOS (PR-3-macos.md + CI links; note CHANGELOG conflict with the Windows PR) | todo |
