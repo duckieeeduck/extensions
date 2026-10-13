@@ -20,8 +20,8 @@ Windows follow-up to #30884. macOS code is unchanged.
 
 - `npm test`: 103 mocked tests pass, including 39 that feed malformed helper output (bad JSON, extra keys, wrong types, oversized dimensions, non-canonical base64, a full 2048 x 2048 payload) and expect a clean error.
 - ESLint and Prettier pass. `tsc --noEmit` needs the `raycast-env.d.ts` that `ray build` generates.
-- Native tests on GitHub Actions (`windows-latest` x64 and `windows-11-arm`, real Windows PowerShell 5.1 and Windows OCR): CI_RESULT_LINE
-- Reproductions before the fixes (run RUN_REPRO): a network-path file and a metafile named `.png` were both opened and their text recognized; a 30000 x 30000 PNG was already refused with bounded memory (103 MB peak, 0.5 s), now kept as a regression test.
+- Native tests on GitHub Actions (`windows-latest` x64 and `windows-11-arm`, real Windows PowerShell 5.1 and Windows OCR): 25 pass, 0 fail, 1 skipped on each runner (https://github.com/duckieeeduck/extensions/actions/runs/38355859751). The skipped test is the Escape-without-focus test: CI runners have no interactive desktop, so the overlay cannot appear; it needs the desktop check below.
+- Reproductions before the fixes (https://github.com/duckieeeduck/extensions/actions/runs/38354814076): a network-path file and a metafile named `.png` were both opened and their text recognized; a 30000 x 30000 PNG was already refused with bounded memory (103 MB peak, 0.5 s), now kept as a regression test.
 - `ray build -e dist` on `macos-latest` compiles the unchanged Swift code.
 - Desktop checks pending: see `docs/TESTING.md` -> "Windows improvements - verification".
 

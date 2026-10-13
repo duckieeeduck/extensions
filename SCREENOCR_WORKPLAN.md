@@ -78,29 +78,29 @@ Combined repro CI branch: `ci/screenocr-windows-repro` = ci windows branch + W1,
 Repro test commits are now on `ext/screenocr-windows-improvements` (cd77e9ca9 W1, b24fb41d3 W2, 291646918 W3, 18637d021 T3). Sonnet check of the tests: all OK (notes: W1 fix must refuse before opening; W3 already bounded; T3 gap is harmless strictness but the fix is one line, adopted).
 | ID | Fix | Branch | Status | Commit |
 |---|---|---|---|---|
-| F-W1 | Accept only local absolute paths (drive letter); reject UNC, `\\?\`, `\\.\` paths before opening | windows | done, Opus reviewed; native CI pending | 4ff75857a |
-| F-W2 | Check file signature (PNG, JPEG, GIF, BMP, TIFF) before decoding; check `RawFormat` after decoding; same for clipboard PNG stream | windows | done, Opus reviewed; native CI pending | 18ae7e682 |
+| F-W1 | Accept only local absolute paths (drive letter); reject UNC, `\\?\`, `\\.\` paths before opening | windows | done, Opus reviewed, native CI green | fbec113b8 |
+| F-W2 | Check file signature (PNG, JPEG, GIF, BMP, TIFF) before decoding; check `RawFormat` after decoding; same for clipboard PNG stream | windows | done, Opus reviewed, native CI green | 793464efc |
 | F-W3 | No source change (memory already bounded); W3 test becomes a regression guard accepting clipboard-too-large or clipboard-corrupt | windows | done (in 18ae7e682) | |
 | F-W6 | `Set-StrictMode -Version 2.0` | windows | dropped | |
 | F-M1 | Check `dup`/`open` results; skip silencing if either fails | macOS | dropped | |
 | F-M2 | Per-run private temp folder, removed on every exit path | macOS | dropped | |
-| F-T3 | Require luminance length % 4 == 0 (kept the linear BASE64 regex; a grouped canonical regex overflowed the V8 stack on 5.6 MB, now guarded by a 2048x2048 test) | windows (cherry-picked) | done, Opus reviewed: 103/103 tests | aafd21518 | |
+| F-T3 | Require luminance length % 4 == 0 (kept the linear BASE64 regex; a grouped canonical regex overflowed the V8 stack on 5.6 MB, now guarded by a 2048x2048 test) | windows (cherry-picked) | done, Opus reviewed: 103/103 tests | 7539b3574 | |
 | F-C1 | Workflow hardening | ci only | done | |
 Each fix also adds a CHANGELOG line under the existing unreleased entry.
 
 ### Phase 4: native verification
 | ID | Task | Status |
 |---|---|---|
-| P4.1 | Rebuild `ci/` branches from updated ext branches, push, read Actions results (Windows x64, Windows ARM, macOS). Report the Escape test as skipped if the runner has no interactive desktop | doing: ci windows 6bccb7015 pushed (ext head 759dd24ac, hardened workflow) |
-| P4.2 | Fix any failure via the same test-first loop | todo |
+| P4.1 | Rebuild `ci/` branches from updated ext branches, push, read Actions results (Windows x64, Windows ARM, macOS). Report the Escape test as skipped if the runner has no interactive desktop | done: run 38355859751 on ci 6bccb7015 (tree db9f41d47 = ext head after P5.0): Windows x64 and ARM64 native pass=25 fail=0 skip=1 (Escape skipped: no interactive desktop); mocked 103/103; macOS `ray build` OK. W3 guard: 118 MB / 0.45 s (x64), 122 MB / 0.62 s (ARM) |
+| P4.2 | Fix any failure via the same test-first loop | done (none) |
 
 ### Phase 5: final review and PRs
 | ID | Task | Status |
 |---|---|---|
-| P5.0 | Normalize commit metadata on ext branches: author duckieeeduck for all PR commits, trailers = the session's prescribed attribution lines (workers added other trailers) | todo |
-| P5.1 | Opus final review of each ext branch diff (correctness and security) | todo |
-| P5.2 | Push ext branches; open draft PR to raycast/extensions for Windows (PR-1-windows.md + CI links + hardening section) | todo |
-| P5.3 | Open draft PR for macOS (PR-3-macos.md + CI links; note CHANGELOG conflict with the Windows PR) | todo |
+| P5.0 | Normalize commit metadata on ext branches: author duckieeeduck for all PR commits, trailers = the session's prescribed attribution lines (workers added other trailers) | done: Windows branch rewritten 13f87d516..e7b6541d3, tree unchanged; macOS branch already consistent |
+| P5.1 | Opus final review of each ext branch diff (correctness and security) | done: Windows fixes and macOS PR 3 reviewed, no blocking issues |
+| P5.2 | Push ext branches; open draft PR to raycast/extensions for Windows | blocked: this session cannot attach raycast/extensions (same repo name as the fork; one directory per name). Owner opens it from the fork with `screenocr-pr/PR-windows.md`, or a new session with raycast/extensions as source opens it |
+| P5.3 | Open draft PR for macOS | blocked: same as P5.2; text in `screenocr-pr/PR-macos.md` |
 | P5.4 | Subscribe to both PRs; drive to green | todo |
 
 ### Phase 6: owner on-device checks (from handoff, plus hardening)
@@ -116,4 +116,5 @@ Verified on Microsoft Learn 2026-10-13: Text Recognition runs only on a Copilot+
 On hold indefinitely. Neither a script nor an unsigned program is "safe" by default; code signing and the organization's policy decide.
 
 ## Log
+- 2026-10-13 (later): Phase 1-4 complete. Findings confirmed by failing tests on Windows CI: W1 (network paths opened), W2 (metafile named .png decoded). Fixed and green on x64 and ARM64. W3 not a risk (bounded); kept as guard. T3 strictness fix. T1 clean. M1, M2, W6 dropped with reasons. Tracking PR duckieeeduck/extensions#1. Upstream PRs need the owner (see P5.2).
 - 2026-10-13: Session start. Answered owner questions. Recreated ext branches from patches on upstream main b6cd2e2cf. Baseline on Windows branch: 64/64 mocked tests pass; npm audit: only esbuild GHSA-g7r4-m6w7-qqqr (2 low). Container has no pwsh/dotnet/swift. Wrote this plan.
