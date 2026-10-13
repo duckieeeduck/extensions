@@ -697,6 +697,67 @@ Invoke-Test 'copied files on network paths are refused before opening' {
     }
 }
 
+Invoke-Test 'copied files whose content is not a raster image are refused' {
+    # The file has a .png name but contains an EMF metafile. The helper must decide
+    # from the content, not the name, and refuse it before GDI+ parses the metafile.
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $folder = Join-Path ([System.IO.Path]::GetTempPath()) ('screenocr-disguised-' + [Guid]::NewGuid().ToString('N'))
+    $path = Join-Path $folder 'disguised.png'
+    $refBitmap = $null
+    $refGraphics = $null
+    $hdc = [IntPtr]::Zero
+    $metafile = $null
+    $metaGraphics = $null
+    $font = $null
+    $collection = $null
+    try {
+        [void][System.IO.Directory]::CreateDirectory($folder)
+        $refBitmap = New-Object System.Drawing.Bitmap (1, 1)
+        $refGraphics = [System.Drawing.Graphics]::FromImage($refBitmap)
+        $hdc = $refGraphics.GetHdc()
+        $frame = New-Object System.Drawing.RectangleF (0, 0, 1200, 240)
+        $metafile = New-Object System.Drawing.Imaging.Metafile ($path, $hdc, $frame, [System.Drawing.Imaging.MetafileFrameUnit]::Pixel, [System.Drawing.Imaging.EmfType]::EmfOnly)
+        $refGraphics.ReleaseHdc($hdc)
+        $hdc = [IntPtr]::Zero
+        $metaGraphics = [System.Drawing.Graphics]::FromImage($metafile)
+        $metaGraphics.Clear([System.Drawing.Color]::White)
+        $metaGraphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+        $font = New-Object System.Drawing.Font ('Segoe UI', 72, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+        $metaGraphics.DrawString('SCREENOCR TEST', $font, [System.Drawing.Brushes]::Black, 30, 55)
+        $metaGraphics.Flush()
+        $metaGraphics.Dispose()
+        $metaGraphics = $null
+        $metafile.Dispose()
+        $metafile = $null
+
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+        Assert-True ($bytes.Length -ge 4) 'The metafile fixture was not written.'
+        $header = ($bytes[0..3] | ForEach-Object { $_.ToString('X2') }) -join ' '
+        Assert-Equal $header '01 00 00 00' 'The fixture is not an EMF metafile (EMR_HEADER).'
+
+        $collection = New-Object System.Collections.Specialized.StringCollection
+        [void]$collection.Add($path)
+        [System.Windows.Forms.Clipboard]::SetFileDropList($collection)
+
+        $result = Invoke-HelperProcess '-Mode clipboard'
+        Assert-Equal $result.ExitCode 4 "A disguised metafile was not refused with the clipboard error exit code: $($result.Stderr) $($result.Stdout)"
+        $payload = $result.Stdout.Trim() | ConvertFrom-Json
+        Assert-Equal $payload.status 'error' 'A disguised metafile returned the wrong status.'
+        Assert-Equal $payload.code 'clipboard-unsupported' 'A disguised metafile returned the wrong protocol code.'
+    }
+    finally {
+        try { [System.Windows.Forms.Clipboard]::Clear() } catch {}
+        if ($metaGraphics) { $metaGraphics.Dispose() }
+        if ($metafile) { $metafile.Dispose() }
+        if ($refGraphics -and $hdc.ToInt64() -ne 0) { $refGraphics.ReleaseHdc($hdc) }
+        if ($font) { $font.Dispose() }
+        if ($refGraphics) { $refGraphics.Dispose() }
+        if ($refBitmap) { $refBitmap.Dispose() }
+        Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "RESULT pass=$script:Passed fail=$script:Failed skip=$script:Skipped"
 if ($script:Failed -gt 0) { exit 1 }
 exit 0
