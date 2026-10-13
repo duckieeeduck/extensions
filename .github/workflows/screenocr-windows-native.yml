@@ -29,6 +29,7 @@ jobs:
       - name: Mocked behavior tests
         run: npm test
       - name: Native Windows tests (real PowerShell 5.1 and Windows OCR)
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           powershell.exe -NoLogo -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File tests/windows-native.ps1 -RequireOcr
