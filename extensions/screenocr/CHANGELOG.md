@@ -8,6 +8,7 @@
 - Less startup work on Windows: the selection overlay no longer waits for the OCR engine to load, clipboard recognition skips unneeded native setup, and images reach the OCR engine without PNG re-encoding.
 - Clipboard images copied from browsers and Office keep their transparency, and copied photo files are rotated according to their EXIF orientation.
 - Windows requirements now state Windows 11, the tested version.
+- Copied files on network paths are refused without being opened.
 
 ## [Windows Support] - 2026-09-20
 
