@@ -146,7 +146,9 @@ $requiredFunctions = @(
     'Normalize-OcrLine',
     'Invoke-Ocr',
     'Enter-CaptureMutex',
-    'Test-LocalFilePath'
+    'Test-LocalFilePath',
+    'Get-ImageSignature',
+    'Read-StreamHeader'
 )
 # Script-scope state the dot-sourced helper functions expect.
 $script:DebugOutput = $false
@@ -257,6 +259,28 @@ Invoke-Test 'only local drive paths are accepted for copied files' {
     $refused = @('\\server\share\a.png', '\\?\C:\a.png', '\\?\UNC\server\share\a.png', '\\.\C:\a.png', '//server/share/a.png', 'a.png', '..\a.png', '', 'C:a.png')
     foreach ($path in $refused) {
         Assert-Equal (Test-LocalFilePath $path) $false "A non-local path was accepted: <$path>."
+    }
+}
+
+Invoke-Test 'image signatures are recognized from content' {
+    $cases = @(
+        @{ Bytes = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00); Expected = 'png' },
+        @{ Bytes = [byte[]](0xFF, 0xD8, 0xFF, 0xE0); Expected = 'jpeg' },
+        @{ Bytes = [byte[]](0x47, 0x49, 0x46, 0x38, 0x37, 0x61); Expected = 'gif' },
+        @{ Bytes = [byte[]](0x47, 0x49, 0x46, 0x38, 0x39, 0x61); Expected = 'gif' },
+        @{ Bytes = [byte[]](0x42, 0x4D, 0x00, 0x00); Expected = 'bmp' },
+        @{ Bytes = [byte[]](0x49, 0x49, 0x2A, 0x00); Expected = 'tiff' },
+        @{ Bytes = [byte[]](0x4D, 0x4D, 0x00, 0x2A); Expected = 'tiff' },
+        # EMF metafile header (EMR_HEADER): not a raster format.
+        @{ Bytes = [byte[]](0x01, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00); Expected = $null },
+        # Too short to contain the PNG signature.
+        @{ Bytes = [byte[]](0x89, 0x50); Expected = $null },
+        @{ Bytes = $null; Expected = $null }
+    )
+    foreach ($case in $cases) {
+        $actual = Get-ImageSignature $case.Bytes
+        $shown = if ($null -ne $case.Bytes) { ($case.Bytes | ForEach-Object { $_.ToString('X2') }) -join ' ' } else { 'null' }
+        Assert-Equal $actual $case.Expected "Signature mismatch for <$shown>."
     }
 }
 
@@ -773,7 +797,7 @@ Invoke-Test 'copied files whose content is not a raster image are refused' {
         Assert-Equal $result.ExitCode 4 "A disguised metafile was not refused with the clipboard error exit code: $($result.Stderr) $($result.Stdout)"
         $payload = $result.Stdout.Trim() | ConvertFrom-Json
         Assert-Equal $payload.status 'error' 'A disguised metafile returned the wrong status.'
-        Assert-Equal $payload.code 'clipboard-unsupported' 'A disguised metafile returned the wrong protocol code.'
+        Assert-Equal $payload.code 'clipboard-unsupported' "A disguised metafile returned the wrong protocol code. Stdout: $($result.Stdout)"
     }
     finally {
         try { [System.Windows.Forms.Clipboard]::Clear() } catch {}
@@ -793,6 +817,9 @@ Invoke-Test 'copied images with huge declared dimensions are refused with bounde
     Add-Type -AssemblyName System.IO.Compression
     # A 30000 x 30000 grayscale PNG whose pixels are all zero. The zero rows compress
     # to well under 5 MB, but decoding it requires a full-size bitmap.
+    # Regression guard for bounded memory: the helper must refuse it without allocating
+    # the full bitmap. GDI+ may reject the stream as corrupt before the size check runs,
+    # which is also a bounded refusal, so either code is accepted.
     function New-CrcTable {
         $table = [long[]]::new(256)
         for ($n = 0; $n -lt 256; $n++) {
@@ -894,7 +921,7 @@ Invoke-Test 'copied images with huge declared dimensions are refused with bounde
         Assert-Equal $result.ExitCode 4 "Huge declared dimensions did not return the clipboard error exit code: $($result.Stderr)"
         $payload = $result.Stdout.Trim() | ConvertFrom-Json
         Assert-Equal $payload.status 'error' 'Huge declared dimensions returned the wrong status.'
-        Assert-Equal $payload.code 'clipboard-too-large' 'Huge declared dimensions returned the wrong protocol code.'
+        Assert-True (@('clipboard-too-large', 'clipboard-corrupt') -contains $payload.code) "Huge declared dimensions returned the wrong protocol code: $($result.Stdout)"
         Assert-True ($elapsedSeconds -lt 15) "Refusing the huge declared dimensions took $elapsedSeconds seconds."
         Assert-True ($peakBytes -gt 0) 'The helper peak working set could not be measured.'
         Assert-True ($peakBytes -lt 600MB) "Refusing the huge declared dimensions used $([Math]::Round($peakBytes / 1MB)) MB at peak."
