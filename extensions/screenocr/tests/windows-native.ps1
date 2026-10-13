@@ -145,7 +145,8 @@ $requiredFunctions = @(
     'New-OcrEngine',
     'Normalize-OcrLine',
     'Invoke-Ocr',
-    'Enter-CaptureMutex'
+    'Enter-CaptureMutex',
+    'Test-LocalFilePath'
 )
 # Script-scope state the dot-sourced helper functions expect.
 $script:DebugOutput = $false
@@ -246,6 +247,16 @@ Invoke-Test 'bitmap resize clamps zero-sized requests' {
     finally {
         if ($resized) { $resized.Dispose() }
         $source.Dispose()
+    }
+}
+
+Invoke-Test 'only local drive paths are accepted for copied files' {
+    foreach ($path in @('C:\a.png', 'd:\x\y.jpg')) {
+        Assert-True (Test-LocalFilePath $path) "A local drive path was refused: <$path>."
+    }
+    $refused = @('\\server\share\a.png', '\\?\C:\a.png', '\\?\UNC\server\share\a.png', '\\.\C:\a.png', '//server/share/a.png', 'a.png', '..\a.png', '', 'C:a.png')
+    foreach ($path in $refused) {
+        Assert-Equal (Test-LocalFilePath $path) $false "A non-local path was accepted: <$path>."
     }
 }
 

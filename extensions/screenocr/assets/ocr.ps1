@@ -498,6 +498,13 @@ function Select-ScreenRegion {
     }
 }
 
+function Test-LocalFilePath {
+    # Pure string check: only drive-letter paths qualify. UNC, device and extended-length
+    # paths, relative paths and empty strings are refused without touching the file system.
+    param([string]$Path)
+    return [bool]($Path -match '^[A-Za-z]:\\')
+}
+
 function Read-ClipboardPngOnce {
     # Browsers and Office also publish a PNG clipboard format that keeps transparency.
     # The standard bitmap format drops alpha, which can turn dark text on a transparent
@@ -547,6 +554,8 @@ function Read-ClipboardBitmapOnce {
     $foundUnreadable = $false
     $foundCorrupt = $false
     foreach ($file in $files) {
+        # Opening a network path contacts that server and may send the user's Windows credentials.
+        if (-not (Test-LocalFilePath $file)) { $foundUnsupported = $true; continue }
         $extension = [System.IO.Path]::GetExtension($file).ToLowerInvariant()
         if ($supported -notcontains $extension) { $foundUnsupported = $true; continue }
         $stream = $null
