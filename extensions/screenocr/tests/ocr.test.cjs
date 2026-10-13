@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const test = require("node:test");
+const { describe, test } = require("node:test");
 const {
   BarcodeFormat,
   EncodeHintType,
@@ -547,4 +547,197 @@ test("Windows language manager respects the toast preference", async () => {
   await showSuccessToast("Saved");
   await showFailureToast(new Error("Failed"));
   assert.deepEqual(host.calls, []);
+});
+
+describe("Windows helper protocol rejects malformed output", () => {
+  const errorOutcome = (message) => ({ status: "error", message });
+  const invalidResponse = errorOutcome(
+    "The Windows OCR helper returned an invalid response.",
+  );
+  const invalidResult = errorOutcome(
+    "The Windows OCR helper returned an invalid result.",
+  );
+  const invalidImage = errorOutcome(
+    "The Windows OCR helper returned an invalid image.",
+  );
+  const genericClipboard = errorOutcome(
+    "The clipboard does not contain a supported image.",
+  );
+  const language = (overrides = {}) => ({
+    tag: "ja-JP",
+    displayName: "Japanese",
+    ...overrides,
+  });
+  const imagePayload = (overrides = {}) =>
+    JSON.stringify({
+      status: "image",
+      width: 2,
+      height: 2,
+      luminance: Buffer.alloc(4).toString("base64"),
+      ...overrides,
+    });
+
+  const malformedRecognitions = [
+    [
+      "empty output",
+      "",
+      errorOutcome("The Windows OCR helper returned an empty response."),
+    ],
+    ["null", "null", invalidResponse],
+    ["an array", "[]", invalidResponse],
+    ["a bare string", '"text"', invalidResponse],
+    ["recognized without text", '{"status":"recognized"}', invalidResult],
+    [
+      "recognized with empty text",
+      '{"status":"recognized","text":""}',
+      invalidResult,
+    ],
+    [
+      "recognized with whitespace text",
+      '{"status":"recognized","text":"   "}',
+      invalidResult,
+    ],
+    [
+      "recognized with non-string text",
+      '{"status":"recognized","text":5}',
+      invalidResult,
+    ],
+    [
+      "recognized with an extra key",
+      '{"status":"recognized","text":"a","extra":1}',
+      invalidResult,
+    ],
+    ["no-text with an extra key", '{"status":"no-text","x":1}', invalidResult],
+    [
+      "a __proto__ key shadowing status",
+      '{"__proto__":{"status":"recognized"},"text":"a"}',
+      invalidResult,
+    ],
+    [
+      "two concatenated JSON objects",
+      '{"status":"recognized","text":"a"}{"status":"recognized","text":"b"}',
+      invalidResponse,
+    ],
+  ];
+  for (const [label, stdout, expected] of malformedRecognitions) {
+    test(`recognizeWindows rejects ${label}`, async () => {
+      const host = createHost({ stdout });
+      assert.deepEqual(
+        await host.load("src/ocr/windows.ts").recognizeWindows("clipboard"),
+        expected,
+      );
+    });
+  }
+
+  test("recognizeWindows accepts a 7 MB valid payload", async () => {
+    const text = "a".repeat(7 * 1024 * 1024);
+    const host = createHost({
+      stdout: JSON.stringify({ status: "recognized", text }),
+    });
+    const outcome = await host
+      .load("src/ocr/windows.ts")
+      .recognizeWindows("clipboard");
+    assert.equal(outcome.status, "recognized");
+    assert.ok(
+      outcome.text === text,
+      "recognized text differs from the payload",
+    );
+  });
+
+  const malformedImages = [
+    ["zero width", { width: 0 }],
+    ["width above the barcode limit", { width: 2049 }],
+    ["fractional width", { width: 1.5 }],
+    ["negative width", { width: -2 }],
+    ["luminance that is not base64", { luminance: "!!!!" }],
+    ["luminance with a space", { luminance: "AAAA AA==" }],
+    ["luminance with a newline", { luminance: "AAAA\nAA==" }],
+    [
+      "unpadded luminance with an invalid length",
+      { width: 1, height: 2, luminance: "AAA" },
+    ],
+    [
+      "luminance shorter than width times height",
+      { luminance: Buffer.alloc(3).toString("base64") },
+    ],
+    [
+      "luminance one byte longer than width times height",
+      { luminance: Buffer.alloc(5).toString("base64") },
+    ],
+    ["an extra key", { text: "secret" }],
+  ];
+  for (const [label, fields] of malformedImages) {
+    test(`detectBarcodeWindows rejects an image with ${label}`, async () => {
+      const host = createHost({ stdout: imagePayload(fields) });
+      const outcome = await host
+        .load("src/ocr/windows.ts")
+        .detectBarcodeWindows();
+      assert.deepEqual(outcome, invalidImage);
+    });
+  }
+
+  const malformedLanguageLists = [
+    [
+      "duplicate tags differing only by case",
+      [language(), language({ tag: "JA-jp" })],
+    ],
+    ["the auto tag", [language({ tag: "auto" })]],
+    ["a tag with spaces", [language({ tag: "ja JP" })]],
+    ["an empty display name", [language({ displayName: "" })]],
+    ["a whitespace display name", [language({ displayName: "   " })]],
+    ["a non-string display name", [language({ displayName: 5 })]],
+    ["an extra key on a language", [{ ...language(), extra: 1 }]],
+  ];
+  for (const [label, languages] of malformedLanguageLists) {
+    test(`getAvailableWindowsLanguages rejects ${label}`, async () => {
+      const host = createHost({
+        stdout: JSON.stringify({ status: "languages", languages }),
+      });
+      await assert.rejects(
+        host.load("src/ocr/windows.ts").getAvailableWindowsLanguages(),
+        {
+          message: "The Windows OCR helper returned an invalid language list.",
+        },
+      );
+    });
+  }
+
+  test("getAvailableWindowsLanguages rejects an extra key on the payload", async () => {
+    const host = createHost({
+      stdout: JSON.stringify({
+        status: "languages",
+        languages: [language()],
+        extra: 1,
+      }),
+    });
+    await assert.rejects(
+      host.load("src/ocr/windows.ts").getAvailableWindowsLanguages(),
+      {
+        message: "The Windows OCR helper returned an invalid language list.",
+      },
+    );
+  });
+
+  for (const [label, stdout] of [
+    ["an unknown code string", { status: "error", code: "clipboard-unknown" }],
+    ["the __proto__ code", { status: "error", code: "__proto__" }],
+    ["the constructor code", { status: "error", code: "constructor" }],
+    ["the toString code", { status: "error", code: "toString" }],
+    [
+      "a known code with an extra key",
+      { status: "error", code: "clipboard-busy", extra: 1 },
+    ],
+    ["a non-error status", { status: "recognized", code: "clipboard-busy" }],
+  ]) {
+    test(`clipboard exit 4 with ${label} maps to the generic message`, async () => {
+      const host = createHost({
+        processError: { code: 4 },
+        stdout: JSON.stringify(stdout),
+      });
+      assert.deepEqual(
+        await host.load("src/ocr/windows.ts").recognizeWindows("clipboard"),
+        genericClipboard,
+      );
+    });
+  }
 });
