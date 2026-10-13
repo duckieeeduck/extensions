@@ -1,0 +1,62 @@
+name: ScreenOCR checks (fork only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["ci/screenocr-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenocr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: extensions/screenocr
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extensions/screenocr
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Mocked behavior tests
+        run: npm test
+      - name: Native Windows tests (real PowerShell 5.1 and Windows OCR)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          powershell.exe -NoLogo -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File tests/windows-native.ps1 -RequireOcr
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: extensions/screenocr
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extensions/screenocr
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Mocked behavior tests
+        run: npm test
+      - name: Distribution build (compiles the Swift code)
+        run: npx ray build -e dist
