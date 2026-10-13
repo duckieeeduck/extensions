@@ -35,6 +35,8 @@ Never add anything that evades or bypasses security tooling or policy.
 | `ci/screenocr-windows-improvements` | ext branch + workflow commit | fork CI only | never |
 | `ci/screenocr-macos-cancel-fix` | ext branch + workflow commit | fork CI only | never |
 
+Local layout (container-specific): the main checkout `/home/user/extensions` is sparse (only `/SCREENOCR_WORKPLAN.md`, `/extensions/screenocr/`, `/.github/`) because a full checkout fills the disk. Work happens in sparse worktrees under the scratchpad: `wt-windows`, `wt-macos` (ext branches), `ci-windows`, `ci-macos` (ci branches). Logs: scratchpad `logs/`. In a new container: `git worktree add --no-checkout <dir> <branch>`, then `git sparse-checkout set --no-cone /extensions/screenocr/` and `git checkout`.
+
 Rebuild from scratch: the handoff zip is at `/root/.claude/uploads/0bbc14b4-8b6f-5b98-827a-8afb5baac351/0842f38e-screenocr-handoff_1.zip` (only in the original container). Branches pushed to the fork are the durable copy once task P1.3 is done.
 `git am` was used; it strips `[ScreenOCR]` from the subject. Task P1.1 restores it.
 
@@ -45,10 +47,10 @@ Status: `todo` / `doing` / `done` / `dropped` / `blocked`.
 | ID | Task | Who | Status | Evidence |
 |---|---|---|---|---|
 | P1.0 | Re-create both ext branches from the handoff patches on upstream main | Opus | done | both applied cleanly incl. CHANGELOG; Windows branch 52ccea50a, macOS branch 2d1a9f547 |
-| P1.1 | Restore `[ScreenOCR]` subject prefix on both commits (`git commit --amend`, keep author) | Haiku | todo | |
-| P1.2 | Baseline checks on both ext branches: `npm ci`, `npm test`, `npx tsc --noEmit`, `npx eslint src`, `npx prettier --check .` | Haiku, Sonnet checks | todo | Windows branch: 64/64 tests pass (2026-10-13) |
-| P1.3 | Install PowerShell 7 (`pwsh`) in the container for parse checks of .ps1 files; if not possible, record it and rely on fork CI | Haiku | todo | |
-| P1.4 | Build `ci/` branches (ext branch + workflow commit from handoff `screenocr-windows-native.yml`), push `ext/*` and `ci/*` to the fork, read the Actions results | Opus | todo | |
+| P1.1 | Restore `[ScreenOCR]` subject prefix on both commits (`git commit --amend`, keep author) | Opus | done | Windows 13f87d516, macOS 63ab0f8d9; author duckieeeduck kept |
+| P1.2 | Baseline checks on both ext branches: `npm ci`, `npm test`, `npx tsc --noEmit`, `npx eslint src`, `npx prettier --check .` | Haiku, Sonnet checks | doing | Windows branch: 64/64 tests pass (2026-10-13) |
+| P1.3 | Install PowerShell 7 (`pwsh`) in the container for parse checks of .ps1 files; if not possible, record it and rely on fork CI | Haiku | doing | |
+| P1.4 | Build `ci/` branches (ext branch + workflow commit from handoff `screenocr-windows-native.yml`), push `ext/*` and `ci/*` to the fork, read the Actions results | Opus | doing | pushed 2026-10-13: ci windows cc3cfca00, ci macOS bc27a9005; Actions results pending |
 
 ### Phase 2: confirm candidate findings with reproducing tests
 Each row: a Haiku worker writes a test that fails on the current code for the stated reason. Sonnet confirms. Findings whose test cannot be made to fail are marked `dropped` with the reason.
