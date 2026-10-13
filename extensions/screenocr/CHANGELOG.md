@@ -9,6 +9,7 @@
 - Clipboard images copied from browsers and Office keep their transparency, and copied photo files are rotated according to their EXIF orientation.
 - Windows requirements now state Windows 11, the tested version.
 - Copied files on network paths are refused without being opened.
+- Copied files are decoded only when their content is a PNG, JPEG, GIF, BMP or TIFF image.
 
 ## [Clipboard Image OCR on macOS] - 2026-10-31
 
