@@ -646,6 +646,57 @@ Invoke-Test 'clipboard recognition prefers the PNG format that keeps transparenc
     }
 }
 
+Invoke-Test 'copied files on network paths are refused before opening' {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    # A copied UNC path must be refused before the helper opens it: opening it
+    # would connect to the server over SMB and can send Windows credentials.
+    $folder = Join-Path ([System.IO.Path]::GetTempPath()) ('screenocr-unc-' + [Guid]::NewGuid().ToString('N'))
+    $path = Join-Path $folder 'unc-probe.png'
+    $bitmap = $null
+    $graphics = $null
+    $font = $null
+    try {
+        if ($path -notmatch '^[A-Za-z]:\\') {
+            Skip-CurrentTest "The temp folder is not on a drive-letter path: $path"
+            return
+        }
+        [void](New-Item -ItemType Directory -Path $folder)
+        $bitmap = New-Object System.Drawing.Bitmap (1200, 240, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.Clear([System.Drawing.Color]::White)
+        $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+        $font = New-Object System.Drawing.Font ('Segoe UI', 72, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+        $graphics.DrawString('SCREENOCR TEST', $font, [System.Drawing.Brushes]::Black, 30, 55)
+        $graphics.Flush()
+        $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+
+        # Address the same file through the local administrative share.
+        $unc = '\\localhost\' + $path.Substring(0, 1) + '$\' + $path.Substring(3)
+        $shareExists = $false
+        try { $shareExists = Test-Path -LiteralPath $unc -PathType Leaf } catch { $shareExists = $false }
+        if (-not $shareExists) {
+            Skip-CurrentTest "The local administrative share does not expose $unc."
+            return
+        }
+
+        $files = New-Object System.Collections.Specialized.StringCollection
+        [void]$files.Add($unc)
+        [System.Windows.Forms.Clipboard]::SetFileDropList($files)
+        $result = Invoke-HelperProcess '-Mode clipboard'
+        Assert-Equal $result.ExitCode 4 "A copied network path was not refused: $($result.Stdout) $($result.Stderr)"
+        $payload = $result.Stdout.Trim() | ConvertFrom-Json
+        Assert-Equal $payload.code 'clipboard-unsupported' 'A copied network path returned the wrong protocol code.'
+    }
+    finally {
+        try { [System.Windows.Forms.Clipboard]::Clear() } catch {}
+        if ($font) { $font.Dispose() }
+        if ($graphics) { $graphics.Dispose() }
+        if ($bitmap) { $bitmap.Dispose() }
+        Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "RESULT pass=$script:Passed fail=$script:Failed skip=$script:Skipped"
 if ($script:Failed -gt 0) { exit 1 }
 exit 0
