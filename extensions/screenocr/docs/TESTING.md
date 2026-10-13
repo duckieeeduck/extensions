@@ -61,17 +61,17 @@ The desktop findings exposed and led to these fixes:
 - Escape only cancelled after mouse interaction. The Windows overlay now also polls the current Escape key state while its dialog is open, then stops/disposes that timer. The deferred focus request alone did not fix the failure.
 - The abandoned-lock test hung during normal process shutdown. It now deliberately terminates its lock-holder process, checks the expected exit code as an integer, and retains the acquisition and recovery assertions.
 
-| Desktop check | Observed result |
-| --- | --- |
-| Language command | Lists Auto, en-GB and en-US; en-US selected for OCR tests |
-| Region capture | Known lines recognized exactly; overlay closes on mouse release |
-| Escape cancellation | Works before and after mouse interaction after the fix |
-| Right-click and click-without-drag cancellation | Overlay closes and clipboard remains unchanged |
-| Subsequent capture after cancellation | Works |
-| Clipboard-image OCR | Clean two-line sample matches region OCR exactly |
-| Copy, paste, copy-and-paste | Correct text, one automatic insertion at intended Notepad cursor, clipboard reusable in both mode |
-| Full-screen capture on one display | Known lines recognized; Raycast search window excluded |
-| Identical text near top and bottom | Both copies recognized exactly |
+| Desktop check                                   | Observed result                                                                                   |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Language command                                | Lists Auto, en-GB and en-US; en-US selected for OCR tests                                         |
+| Region capture                                  | Known lines recognized exactly; overlay closes on mouse release                                   |
+| Escape cancellation                             | Works before and after mouse interaction after the fix                                            |
+| Right-click and click-without-drag cancellation | Overlay closes and clipboard remains unchanged                                                    |
+| Subsequent capture after cancellation           | Works                                                                                             |
+| Clipboard-image OCR                             | Clean two-line sample matches region OCR exactly                                                  |
+| Copy, paste, copy-and-paste                     | Correct text, one automatic insertion at intended Notepad cursor, clipboard reusable in both mode |
+| Full-screen capture on one display              | Known lines recognized; Raycast search window excluded                                            |
+| Identical text near top and bottom              | Both copies recognized exactly                                                                    |
 
 These are user-reported desktop observations, supported by supplied screenshots/text; no screencast was collected. The native suite uses real OCR but does not exercise the Escape timer or selection UI.
 
