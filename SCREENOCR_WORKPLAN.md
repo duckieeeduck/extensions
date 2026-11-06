@@ -1,0 +1,120 @@
+# ScreenOCR work plan (resumable)
+
+This file is the single source of truth for this work. Read it first when resuming.
+It lives only on branch `claude/inspiring-allen-9zhzvv` at the repo root. Never commit it to an `ext/` or `ci/` branch.
+
+Owner: GitHub `duckieeeduck`, Raycast `duck69`. Plain words, blunt, no filler. Label anything unverified [Unverified] / [Inference].
+Never add anything that evades or bypasses security tooling or policy.
+
+## How to resume
+1. `cd /home/user/extensions && git fetch origin` and check out the branches in "Branches" below. If the container is new, rebuild them: see "Rebuild from scratch".
+2. Find the first row in "Task board" whose status starts with `todo` or `doing` and continue it. Skip rows marked `done`, `dropped`, `CONFIRMED`/`NOT a ...` (finished investigations) and `blocked` (they wait on the owner or on access; see "Owner questions" and P5.2).
+3. After every finished task, update its row (status, commit, evidence) and the "Log", then commit this file on `claude/inspiring-allen-9zhzvv` and push.
+
+## Roles (owner decision 2026-10-13)
+- Opus: planner and final reviewer. Writes this plan, assigns tasks, does the last review before any upstream PR.
+- Haiku workers (launched by Opus, `model: haiku`): one narrow task each. Write the reproducing test first, then the fix in a separate task.
+- Sonnet checker (launched by Opus, `model: sonnet`): checks every Haiku result before Opus sees it: does the test fail for the stated reason before the fix, pass after, and are lint/tsc/prettier/tests green.
+- A helper agent cannot launch its own helpers (verified 2026-10-13), so Opus does the launching.
+- Bug rule (owner): for every finding, first a test that reproduces it, then a separate worker fixes it and proves it with the now-passing test.
+
+## Owner decisions
+- 2026-09-23 (from HANDOFF.md): Windows PR first, then macOS PR. Tesseract not planned. CAPTUREBLT, CRLF, concealed clipboard rejected.
+- 2026-10-13: Dependency PR (@raycast/api 2.x) dropped. The esbuild advisory GHSA-g7r4-m6w7-qqqr affects only a developer's machine; `npm audit` on 2026-10-13 shows only that (2 low). Do not bump.
+- 2026-10-13: Rust migration on hold indefinitely. Security hardening of the current TypeScript/PowerShell/Swift code instead.
+- 2026-10-13: Windows AI Text Recognition skipped for now (see "Parked: Windows AI OCR").
+- 2026-10-13: Audit scope: Windows helper, macOS Swift helper, TypeScript + npm deps, fork CI workflow, plus anything else valuable in ScreenOCR, as separate PRs where sensible.
+- 2026-10-13: Allowed to push `ext/*` and `ci/*` branches to the fork and to open draft PRs to raycast/extensions.
+
+## Branches
+| Branch | Base | Purpose | Upstream? |
+|---|---|---|---|
+| `claude/inspiring-allen-9zhzvv` | fork main | this plan file only | no |
+| `ext/screenocr-windows-improvements` | upstream main b6cd2e2cf | PR 1 (handoff) + Windows hardening commits | yes, draft PR |
+| `ext/screenocr-macos-cancel-fix` | upstream main b6cd2e2cf | PR 3 (handoff) + macOS hardening commits | yes, draft PR |
+| `ci/screenocr-windows-improvements` | ext branch + workflow commit | fork CI only | never |
+| `ci/screenocr-macos-cancel-fix` | ext branch + workflow commit | fork CI only | never |
+
+Local layout (container-specific): the main checkout `/home/user/extensions` is sparse (only `/SCREENOCR_WORKPLAN.md`, `/extensions/screenocr/`, `/.github/`) because a full checkout fills the disk. Work happens in sparse worktrees under the scratchpad: `wt-windows`, `wt-macos` (ext branches), `ci-windows`, `ci-macos` (ci branches). Logs: scratchpad `logs/`. In a new container: `git worktree add --no-checkout <dir> <branch>`, then `git sparse-checkout set --no-cone /extensions/screenocr/` and `git checkout`.
+
+Rebuild from scratch: the handoff zip is at `/root/.claude/uploads/0bbc14b4-8b6f-5b98-827a-8afb5baac351/0842f38e-screenocr-handoff_1.zip` (only in the original container). Branches pushed to the fork are the durable copy once task P1.3 is done.
+`git am` was used; it strips `[ScreenOCR]` from the subject. Task P1.1 restores it.
+
+## Task board
+Status: `todo` / `doing` / `done` / `dropped` / `blocked`.
+
+### Phase 1: baseline
+| ID | Task | Who | Status | Evidence |
+|---|---|---|---|---|
+| P1.0 | Re-create both ext branches from the handoff patches on upstream main | Opus | done | both applied cleanly incl. CHANGELOG; Windows branch 52ccea50a, macOS branch 2d1a9f547 |
+| P1.1 | Restore `[ScreenOCR]` subject prefix on both commits (`git commit --amend`, keep author) | Opus | done | Windows 13f87d516, macOS 63ab0f8d9; author duckieeeduck kept |
+| P1.2 | Baseline checks on both ext branches: `npm ci`, `npm test`, `npx tsc --noEmit`, `npx eslint src`, `npx prettier --check .` | Haiku, Opus checked | done | Both branches: npm ci ok, eslint ok, tests windows 64/64, macOS 61/61. `tsc` fails with 9 x `Cannot find name 'Preferences'`: expected, `raycast-env.d.ts` is generated by the ray CLI and not committed. Prettier flags `docs/TESTING.md`: pre-existing on upstream main (unaligned table); fix in Windows PR since it edits that file (task P1.5). Log: scratchpad `logs/p1.2-summary.md` |
+| P1.3 | Install PowerShell 7 (`pwsh`) in the container for parse checks of .ps1 files; if not possible, record it and rely on fork CI | Haiku | done | pwsh 7.5.11 via packages.microsoft.com apt (GitHub tarball blocked by proxy). Checker: scratchpad `tools/parse-ps1.ps1` (parse errors + non-ASCII). All 4 .ps1 files OK |
+| P1.4 | Build `ci/` branches (ext branch + workflow commit from handoff `screenocr-windows-native.yml`), push `ext/*` and `ci/*` to the fork, read the Actions results | Opus | done | pushed 2026-10-13: ci windows cc3cfca00, ci macOS bc27a9005; Windows x64 run 38354201712: mocked 64/64, native pass=20 fail=0 skip=1 (Escape test SKIPPED: no interactive desktop on runner). Windows ARM64: same (pass=20 skip=1, Escape skipped). macOS job: `ray build` compiled the Swift code on both branches (first real macOS build of the PR 3 Swift change: OK). Run 38354201809 (macOS branch): all green. Note: actions/checkout@v4 and setup-node@v4 warn about Node 20 deprecation (fork-only; C1) |
+| P1.5 | Run `npx prettier --write docs/TESTING.md` on the Windows ext branch; separate commit | Opus | done | 759dd24ac; `prettier --check .` clean |
+
+### Phase 2: confirm candidate findings with reproducing tests
+Each row: a Haiku worker writes a test that fails on the current code for the stated reason. Sonnet confirms. Findings whose test cannot be made to fail are marked `dropped` with the reason.
+Windows-native tests go in `tests/windows-native.ps1` and run on fork CI (`windows-latest`, `windows-11-arm`). TypeScript tests go in `tests/ocr.test.cjs`.
+
+| ID | Area | Candidate finding | Test idea | Status |
+|---|---|---|---|---|
+| W1 | ocr.ps1 clipboard files | A copied file list may contain a network (UNC) path such as `\\host\share\a.png`. Opening it makes Windows connect to that host and may send the user's Windows credentials (NTLM) to it; it can also hang until the 90 s timeout. [Inference: standard Windows SMB behavior] | Factor path check into a function; native test passes `\\127.0.0.1\x\a.png`, `\\?\UNC\...`, `\\.\...` and expects rejection without opening | done: CONFIRMED on CI run 38354814076 (windows-latest): UNC path read via \\localhost\C$ and text recognized, exit 0 |
+| W2 | ocr.ps1 image decoding | `Image.FromStream` picks the decoder from the file content, not the extension, so a `.png` that is really an EMF/WMF metafile is parsed by the GDI+ metafile parser (larger attack surface). Same for the clipboard `PNG` stream. | Native test: write EMF bytes to `x.png`, put on clipboard file list; expect `clipboard-unsupported`, currently decoded | done: CONFIRMED on CI run 38354814076: EMF named .png decoded and text recognized, exit 0 |
+| W3 | ocr.ps1 decompression | Pixel-count limit is checked after the image is decoded. A small PNG with huge dimensions (for example 30000 x 30000) may allocate a lot of memory before the check. | Native test: generate such a PNG (few hundred KB); expect `clipboard-too-large` quickly with bounded memory; measure working set | done: NOT a memory risk: CI run 38354814076 shows exit 4 in 0.51 s, peak 103 MB; GDI+ refuses the decode, so code is clipboard-corrupt not clipboard-too-large. Plan: keep test as a regression guard accepting either code with the memory/time bounds; no source change |
+| W4 | windows.ts | Helper is started with `-ExecutionPolicy Bypass`. Verified (Microsoft Learn): Group Policy execution policy (MachinePolicy/UserPolicy) overrides the command-line Process scope, so this does not defeat a policy an organization sets. It is a pattern many security tools log or alert on [Inference]. | No code change without owner decision. Options in "Owner questions". | blocked (owner) |
+| W5 | ocr.ps1 | `Add-Type` compiles C# at run time (starts csc.exe, writes temp files); a pattern some security tools watch [Inference]. Removing it needs a shipped binary. | Document only. | dropped (document) |
+| W6 | ocr.ps1 | No `Set-StrictMode`; typos in variable names fail silently. | Add `Set-StrictMode -Version 2.0`, run all native tests | dropped: no concrete defect; enabling StrictMode in shipped code risks new runtime failures in untested paths |
+| M1 | ScreenOCR.swift | `silencingStdout` ignores failures of `dup`/`open`. If `dup(1)` fails, stdout is never restored and the result is lost; if `open` fails, Vision logs reach stdout and corrupt the protocol. | Extract into a testable function; macOS CI test with a failing open (fd exhaustion via `setrlimit`) | dropped: needs fd exhaustion inside a fresh helper process; path is far-fetched and a repro needs a separate macOS test harness. Documented only |
+| M2 | ScreenOCR.swift | Region capture writes a PNG of the screen into the per-user temp folder; it is removed by `defer`, but stays if the process is killed. | Check whether `screencapture` can write to a private 0700 subfolder; test asserts no file is left after cancel and after error | dropped: leftover file only if the process is killed mid-capture; it sits in the per-user 0700 temp folder that macOS cleans. Documented only |
+| T1 | npm deps | Lockfile: every `resolved` URL is registry.npmjs.org and has an `integrity` hash; no install scripts in new deps (@zxing/library, raycast-cross-extension). | Script check; fail on any deviation | done, no finding: all entries registry.npmjs.org + sha512; no git/file/link deps. Only install script: esbuild (via @raycast/api, already on upstream main). Windows branch adds runtime @zxing/library 0.21.3, @zxing/text-encoding 0.9.0, ts-custom-error 3.3.1: no install scripts; grep for child_process/http/fetch/eval/new Function: 0 hits. Logs: scratchpad `logs/t1-*` |
+| T2 | macos-commands.ts | Any installed extension can launch Recognize Text with `callbackLaunchOptions` and receive the recognized text. The user still has to make a visible selection. By design of raycast-cross-extension. | Confirm in code; document in README; no change unless owner wants | no change: by design of raycast-cross-extension; the user must make a visible selection. Mention to owner |
+| T3 | windows.ts | Protocol parsing: confirm strict validation covers every payload (exact keys, sizes, base64, dimension cap). Fuzz the parser with malformed JSON. | Add fuzz-style mocked tests | 38 tests (work/t3 22e580051); 1 fails: unpadded base64 luminance accepted (low impact: helper always pads). Sonnet check pending |
+| C1 | fork workflow | Actions referenced by tag (`@v4`), checkout keeps the token on disk, no job timeout. | Pin actions to full commit SHAs, `persist-credentials: false`, `timeout-minutes` | done (fork only): `concurrency`, `timeout-minutes: 30`, `persist-credentials: false`, native step `if: !cancelled()`. SHA pinning not done: this session cannot reach the actions/* repositories to resolve SHAs. Canonical file: scratchpad `tools/screenocr-native.yml` |
+
+Combined repro CI branch: `ci/screenocr-windows-repro` = ci windows branch + W1, W2, W3, T3 test commits + workflow tweak (native tests run even when mocked tests fail). Pushed 2026-10-13, run pending. Worktree: scratchpad `ci-repro`.
+
+### Phase 3: fixes (one Haiku worker per confirmed finding; Sonnet checks; small commits)
+Repro test commits are now on `ext/screenocr-windows-improvements` (cd77e9ca9 W1, b24fb41d3 W2, 291646918 W3, 18637d021 T3). Sonnet check of the tests: all OK (notes: W1 fix must refuse before opening; W3 already bounded; T3 gap is harmless strictness but the fix is one line, adopted).
+| ID | Fix | Branch | Status | Commit |
+|---|---|---|---|---|
+| F-W1 | Accept only local absolute paths (drive letter); reject UNC, `\\?\`, `\\.\` paths before opening | windows | done, Opus reviewed, native CI green | fbec113b8 |
+| F-W2 | Check file signature (PNG, JPEG, GIF, BMP, TIFF) before decoding; check `RawFormat` after decoding; same for clipboard PNG stream | windows | done, Opus reviewed, native CI green | 793464efc |
+| F-W3 | No source change (memory already bounded); W3 test becomes a regression guard accepting clipboard-too-large or clipboard-corrupt | windows | done (in 18ae7e682) | |
+| F-W6 | `Set-StrictMode -Version 2.0` | windows | dropped | |
+| F-M1 | Check `dup`/`open` results; skip silencing if either fails | macOS | dropped | |
+| F-M2 | Per-run private temp folder, removed on every exit path | macOS | dropped | |
+| F-T3 | Require luminance length % 4 == 0 (kept the linear BASE64 regex; a grouped canonical regex overflowed the V8 stack on 5.6 MB, now guarded by a 2048x2048 test) | windows (cherry-picked) | done, Opus reviewed: 103/103 tests | 7539b3574 | |
+| F-C1 | Workflow hardening | ci only | done | |
+Each fix also adds a CHANGELOG line under the existing unreleased entry.
+
+### Phase 4: native verification
+| ID | Task | Status |
+|---|---|---|
+| P4.1 | Rebuild `ci/` branches from updated ext branches, push, read Actions results (Windows x64, Windows ARM, macOS). Report the Escape test as skipped if the runner has no interactive desktop | done: run 38355859751 on ci 6bccb7015 (tree db9f41d47 = ext head after P5.0): Windows x64 and ARM64 native pass=25 fail=0 skip=1 (Escape skipped: no interactive desktop); mocked 103/103; macOS `ray build` OK. W3 guard: 118 MB / 0.45 s (x64), 122 MB / 0.62 s (ARM) |
+| P4.2 | Fix any failure via the same test-first loop | done (none) |
+
+### Phase 5: final review and PRs
+| ID | Task | Status |
+|---|---|---|
+| P5.0 | Normalize commit metadata on ext branches: author duckieeeduck for all PR commits, trailers = the session's prescribed attribution lines (workers added other trailers) | done: Windows branch rewritten 13f87d516..e7b6541d3, tree unchanged; macOS branch already consistent |
+| P5.1 | Opus final review of each ext branch diff (correctness and security) | done: Windows fixes and macOS PR 3 reviewed, no blocking issues |
+| P5.2 | Push ext branches; open draft PR to raycast/extensions for Windows | blocked: this session cannot attach raycast/extensions (same repo name as the fork; one directory per name). Owner opens it from the fork with `screenocr-pr/PR-windows.md`, or a new session with raycast/extensions as source opens it |
+| P5.3 | Open draft PR for macOS | blocked: same as P5.2; text in `screenocr-pr/PR-macos.md` |
+| P5.4 | Subscribe to both PRs; drive to green | todo |
+
+### Phase 6: owner on-device checks (from handoff, plus hardening)
+Windows: Escape before clicking must not reach the app underneath; QR code on screen; transparent image copied from a browser; rotated phone photo; time to overlay with SCREENOCR_DEBUG=1 (`npm run dev -- --target release`); copy a file from a network share and confirm the new message. Mac: cancel region OCR, full-screen OCR and barcode, with and without "Keep image in clipboard".
+
+## Owner questions (open)
+- W4 `-ExecutionPolicy Bypass`: (a) keep as is and document in README that organization policy still applies; (b) switch to `RemoteSigned` (works only if Raycast's downloaded assets carry no internet-zone mark, [Unverified]; still a command-line policy flag); (c) remove the flag (the helper then fails on the Windows client default `Restricted`, which breaks most users). Recommendation: (a). Ask before Phase 5.
+
+## Parked: Windows AI OCR (skipped 2026-10-13)
+Verified on Microsoft Learn 2026-10-13: Text Recognition runs only on a Copilot+ PC NPU, needs Windows 11 25H2 (build 26200.7309) or later, and the calling app needs package identity (MSIX or a signed sparse package) with the `systemAIModels` capability; otherwise `UnauthorizedAccessException`. Readiness check is `TextRecognizer.GetReadyState()`. Raycast extensions have no install-time hook [Inference]; a check would run on first use. Feasibility test design is in the 2026-10-13 conversation: run unpackaged (expect failure), run with a self-signed sparse package (expect Ready), try registration on a managed laptop.
+
+## Parked: Rust
+On hold indefinitely. Neither a script nor an unsigned program is "safe" by default; code signing and the organization's policy decide.
+
+## Log
+- 2026-10-13 (later): Phase 1-4 complete. Findings confirmed by failing tests on Windows CI: W1 (network paths opened), W2 (metafile named .png decoded). Fixed and green on x64 and ARM64. W3 not a risk (bounded); kept as guard. T3 strictness fix. T1 clean. M1, M2, W6 dropped with reasons. Tracking PR duckieeeduck/extensions#1. Upstream PRs need the owner (see P5.2).
+- 2026-10-13: Session start. Answered owner questions. Recreated ext branches from patches on upstream main b6cd2e2cf. Baseline on Windows branch: 64/64 mocked tests pass; npm audit: only esbuild GHSA-g7r4-m6w7-qqqr (2 low). Container has no pwsh/dotnet/swift. Wrote this plan.
