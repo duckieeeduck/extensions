@@ -10,12 +10,13 @@ $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 $base = @('-NoLogo','-NoProfile','-NonInteractive','-STA','-ExecutionPolicy','Bypass')
 $cases = [ordered]@{
   'powershell start only'           = @('-Command','exit')
-  'Add-Type tiny C# class'          = @('-Command','Add-Type -TypeDefinition "public class BenchX { }"')
+  'Add-Type tiny C# class'          = @('-Command',"Add-Type -TypeDefinition 'public class BenchX { }'")
   'published: clipboard OCR'        = @('-File',"$PSScriptRoot\ocr-published.ps1",'-Mode','clipboard','-Language','auto')
   'PR: clipboard OCR'               = @('-File',"$PSScriptRoot\..\assets\ocr.ps1",'-Mode','clipboard','-Language','auto')
   'published: list languages'       = @('-File',"$PSScriptRoot\ocr-published.ps1",'-ListLanguages')
   'PR: list languages'              = @('-File',"$PSScriptRoot\..\assets\ocr.ps1",'-ListLanguages')
 }
+$ErrorActionPreference = 'Continue'
 foreach ($name in $cases.Keys) {
   $ms = @(); $out = ''
   for ($i = 0; $i -lt $Runs; $i++) {
