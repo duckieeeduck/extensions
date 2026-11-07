@@ -1,0 +1,21 @@
+name: ScreenOCR macOS cold-start repro (fork only)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["ci/screenocr-macos-coldstart"]
+permissions:
+  contents: read
+jobs:
+  coldstart:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extensions/screenocr/repro
+      - name: Vision cold start leaves the result clean
+        run: extensions/screenocr/repro/coldstart.sh
