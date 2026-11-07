@@ -4,7 +4,7 @@
 set -u
 cd "$(dirname "$0")"
 sw_vers
-swiftc -parse-as-library -O coldstart.swift -o coldstart 2>&1 | tail -5 || exit 1
+swiftc -parse-as-library -O coldstart.swift -o coldstart || exit 1
 fail=0
 for mode in --accurate --fast; do
   for i in 1 2 3 4 5 6 7 8; do

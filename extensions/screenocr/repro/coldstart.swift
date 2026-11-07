@@ -34,18 +34,23 @@ func makeImage() -> CGImage {
   return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)!
 }
 
-let accurate = CommandLine.arguments.contains("--accurate")
-var request = RecognizeTextRequest()
-request.recognitionLevel = accurate ? .accurate : .fast
-request.recognitionLanguages = [Locale.Language(identifier: "en-US")]
-let started = Date()
-do {
-  let observations = try await silencingStdout { try await request.perform(on: makeImage()) }
-  let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-  print(#"{"status":"recognized","text":"\#(text)"}"#)
-} catch {
-  print(#"{"status":"error","message":"\#(error.localizedDescription)"}"#)
+@main
+struct ColdStart {
+  static func main() async {
+    let accurate = CommandLine.arguments.contains("--accurate")
+    var request = RecognizeTextRequest()
+    request.recognitionLevel = accurate ? .accurate : .fast
+    request.recognitionLanguages = [Locale.Language(identifier: "en-US")]
+    let started = Date()
+    do {
+      let observations = try await silencingStdout { try await request.perform(on: makeImage()) }
+      let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+      print(#"{"status":"recognized","text":"\#(text)"}"#)
+    } catch {
+      print(#"{"status":"error","message":"\#(error.localizedDescription)"}"#)
+    }
+    FileHandle.standardError.write("elapsed \(Int(Date().timeIntervalSince(started) * 1000)) ms\n".data(using: .utf8)!)
+    // Give late background logging a chance to reach stdout before exit.
+    try? await Task.sleep(nanoseconds: 1_500_000_000)
+  }
 }
-FileHandle.standardError.write("elapsed \(Int(Date().timeIntervalSince(started) * 1000)) ms\n".data(using: .utf8)!)
-// Give late background logging a chance to reach stdout before exit.
-try? await Task.sleep(nanoseconds: 1_500_000_000)
